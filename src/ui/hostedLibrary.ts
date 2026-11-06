@@ -9,6 +9,7 @@ import type { Library } from './api';
 
 const sceneModules = import.meta.glob<{ default: SceneDefinition }>('/scenes/*.ts');
 const sceneSources = import.meta.glob<string>('/scenes/*.ts', { query: '?raw', import: 'default' });
+const sceneJs = import.meta.glob<string>('/scenes/*.ts', { query: '?scenejs', import: 'default' });
 const logicModules = import.meta.glob<LogicDefinition>('/logics/*.json', { import: 'default' });
 const modelUrls = import.meta.glob<string>('/models/*.glb', { eager: true, query: '?url', import: 'default' });
 const fileId = (path: string) => path.replace(/^.*\/|\.(ts|json|glb)$/g, '');
@@ -54,4 +55,15 @@ export function modelUrl(id: string): string {
   const url = modelUrls[`/models/${id}.glb`];
   if (!url) throw new Error(`Unknown model "${id}"`);
   return url;
+}
+
+export async function sceneSource(id: string): Promise<string | null> {
+  const load = sceneSources[`/scenes/${id}.ts`];
+  return load ? load() : null;
+}
+
+/** The scene compiled to plain JS at build time (see the `?scenejs` loader in server/plugin.ts). */
+export async function sceneCompiled(id: string): Promise<string | null> {
+  const load = sceneJs[`/scenes/${id}.ts`];
+  return load ? load() : null;
 }

@@ -119,3 +119,17 @@ button.wide { width: 100%; padding: 9px 12px; font-size: 13px; }
 #output-status { margin-top: 6px; }
 #output-note { position: fixed; top: 50%; left: calc((100vw - 330px) / 2); transform: translate(-50%, -50%);
   text-align: center; color: var(--muted); font-size: 14px; line-height: 1.6; pointer-events: none; }
+
+/* Scene sets */
+.set-head { margin-bottom: 6px; }
+#set-name { font-weight: 600; cursor: text; border-bottom: 1px dashed var(--line); }
+#set-name:hover { border-bottom-color: var(--accent); }
+.set-list { margin: 0 0 4px; max-height: 260px; }
+.set-list li { display: flex; align-items: center; gap: 8px; }
+.set-list .key { width: 14px; flex: none; color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
+.set-list .what { flex: 1; min-width: 0; }
+.set-list .what .name, .set-list .what .desc { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-list .tools { display: none; flex: none; gap: 2px; }
+.set-list li:hover .tools { display: flex; }
+.set-list .tools button { padding: 1px 5px; font-size: 11px; }
+.set-list li.missing .desc { color: var(--warn); }

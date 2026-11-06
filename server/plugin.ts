@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { Plugin, ViteDevServer } from 'vite';
+import { transformWithEsbuild, type Plugin, type ViteDevServer } from 'vite';
 import { generate, type GenerateRequest } from './claude';
 import { findBlender } from './blender';
 import { generateObject } from './objectAgent';
@@ -18,6 +18,9 @@ import { generateObject } from './objectAgent';
  *   POST /api/logics              → save logic JSON
  *   POST /api/models?name=x.glb   → save an uploaded .glb into models/ (raw body)
  *   POST /api/claude              → generate a scene/logic with Claude and save it
+ *   GET  /api/scenes/:id/compiled → the scene compiled to plain JS (for scene sets)
+ *   POST /api/compile             → { source } → { js }  compile scene TS from a set file
+ *   POST /api/sets/install        → write a set's bundled scenes/models/logics into the library
  *
  * Changes in scenes/ and logics/ are pushed to the browser as `vis:library` HMR events
  * (instead of a full page reload), so you can also edit scenes in any editor or with Claude Code.
@@ -78,6 +81,15 @@ function glbParts(file: string): string[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Scene TypeScript → a plain ES module the browser can import from a blob URL (scene sets).
+ * Scenes have no runtime imports, so stripping types is all that's needed.
+ */
+export async function compileScene(source: string, id = 'scene'): Promise<string> {
+  const out = await transformWithEsbuild(source, `${id}.ts`, { loader: 'ts', format: 'esm', target: 'es2022', sourcemap: false });
+  return out.code;
 }
 
 function backup(dir: string, file: string) {
@@ -170,6 +182,55 @@ export function visualiserApi(env: Record<string, string>): Plugin {
             const f = path.join(SCENES, m[1] + '.ts');
             if (!fs.existsSync(f)) return send(res, 404, { error: 'not found' });
             return send(res, 200, fs.readFileSync(f, 'utf8'), 'text/plain');
+          }
+
+          m = p.match(/^\/api\/scenes\/([a-z0-9-]+)\/compiled$/);
+          if (m && req.method === 'GET') {
+            const f = path.join(SCENES, m[1] + '.ts');
+            if (!fs.existsSync(f)) return send(res, 404, { error: 'not found' });
+            return send(res, 200, await compileScene(fs.readFileSync(f, 'utf8'), m[1]), 'text/javascript');
+          }
+
+          if (p === '/api/compile' && req.method === 'POST') {
+            const body = await readBody(req);
+            if (typeof body.source !== 'string') return send(res, 400, { error: 'source missing' });
+            try {
+              return send(res, 200, { js: await compileScene(body.source, safeId(body.id ?? 'scene')) });
+            } catch (e) {
+              return send(res, 400, { error: `Scene "${body.id}" does not compile: ${(e as Error).message}` });
+            }
+          }
+
+          if (p === '/api/sets/install' && req.method === 'POST') {
+            // { scenes: {id: source}, models: {id: base64}, logics: {id: LogicDefinition}, overwrite }
+            const body = await readBody(req);
+            const plan: { dir: string; file: string; data: Buffer; kind: string; id: string }[] = [];
+            for (const [rawId, src] of Object.entries<string>(body.scenes ?? {})) {
+              const id = safeId(rawId);
+              const code = String(src).replace(/(\bid\s*:\s*)(['"`])[^'"`]*\2/, `$1'${id}'`);
+              plan.push({ dir: SCENES, file: id + '.ts', data: Buffer.from(code, 'utf8'), kind: 'scene', id });
+            }
+            for (const [rawId, b64] of Object.entries<string>(body.models ?? {})) {
+              const data = Buffer.from(String(b64), 'base64');
+              if (data.toString('ascii', 0, 4) !== 'glTF') return send(res, 400, { error: `Model "${rawId}" in the set is not a valid .glb.` });
+              const id = safeId(rawId);
+              plan.push({ dir: MODELS, file: id + '.glb', data, kind: 'model', id });
+            }
+            for (const [rawId, logic] of Object.entries<Record<string, unknown>>(body.logics ?? {})) {
+              const id = safeId(rawId);
+              plan.push({ dir: LOGICS, file: id + '.json', data: Buffer.from(JSON.stringify({ ...logic, id }, null, 2)), kind: 'logic', id });
+            }
+            const changed = plan.filter((f) => {
+              const full = path.join(f.dir, f.file);
+              return !fs.existsSync(full) || !fs.readFileSync(full).equals(f.data);
+            });
+            const conflicts = changed.filter((f) => fs.existsSync(path.join(f.dir, f.file))).map((f) => `${f.kind} "${f.id}"`);
+            if (conflicts.length && !body.overwrite) return send(res, 200, { installed: [], conflicts });
+            for (const f of changed) {
+              backup(f.dir, f.file);
+              fs.writeFileSync(path.join(f.dir, f.file), f.data);
+            }
+            return send(res, 200, { installed: changed.map((f) => `${f.kind} "${f.id}"`), conflicts: [] });
           }
 
           if (p === '/api/scenes/new' && req.method === 'POST') {
@@ -273,6 +334,15 @@ export function visualiserApi(env: Record<string, string>): Plugin {
           return send(res, 500, { error: err.message });
         }
       });
+    },
+
+    // Production build: `/scenes/<id>.ts?scenejs` is the scene compiled to JS, as a string
+    // (hostedLibrary.ts uses it so the hosted site can save self-contained scene sets).
+    async load(id) {
+      if (!id.endsWith('.ts?scenejs')) return null;
+      const file = id.slice(0, -'?scenejs'.length);
+      const js = await compileScene(fs.readFileSync(file, 'utf8'), path.basename(file, '.ts'));
+      return `export default ${JSON.stringify(js)};`;
     },
 
     // Library files (created, changed or deleted): notify the app instead of letting Vite reload

@@ -8,3 +8,4 @@
 - The browser exposes `window.vis = { engine, audio, api }` for debugging, e.g. `vis.engine.field.ctx`, `vis.engine.logic.macros`.
 - Offline-first: nothing in `src/` may call external hosts. Only `server/claude.ts` and `server/objectAgent.ts` (Online mode) and `/api/online-check` touch the network.
 - "New 3D object" runs Claude's Python in headless Blender: `server/blender.ts` spawns Blender with `server/blender_worker.py` (JSON lines over stdin/stdout, minimal env so no secrets reach Blender). `server/objectAgent.ts` runs the tool loop, then the normal scene generation runs for the new model.
+- Scene sets are self-contained `*.set.json` files: entries (scene + logic + slider values) plus the scenes' code and their models. The format and how to make one on request are in `docs/SETS.md`. Pack a manifest with `npm run pack-set -- sets/<name>.set.json`.

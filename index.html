@@ -35,7 +35,7 @@
         <button data-start="file">Audio file…</button>
         <button data-start="demo">Demo beat</button>
       </div>
-      <p class="hint">H hides the panel · F fullscreen · Space pauses · ← / → skip in a file</p>
+      <p class="hint">H hides the panel · F fullscreen · Space pauses · ← / → skip in a file · 1–9 / Page Up / Page Down switch set entries</p>
     </div>
   </div>
 
@@ -55,6 +55,24 @@
       <button id="output-btn" class="accent wide" title="Open a window with only the visuals, for a projector or second screen">⧉ Open projector window</button>
       <label class="check" id="output-preview-row" hidden><input type="checkbox" id="output-preview" checked /> Show preview here</label>
       <div id="output-status" class="hint">Opens a window with only the visuals. Drag it to the projector and press F (or double-click) for fullscreen. Keep this window visible: it drives the show.</div>
+    </section>
+
+    <section id="set-section">
+      <h2>Set <span class="hint">cues for a show</span></h2>
+      <div class="set-head"><span id="set-name" title="Click to rename the set"></span></div>
+      <ol id="set-list" class="list set-list"></ol>
+      <div id="set-empty" class="hint">Pick a scene, logic and sliders, then <b>+ Add current</b>. Switch with a click, keys 1–9, or Page Up / Page Down.</div>
+      <div class="row">
+        <button id="set-add" class="accent" title="Add the current scene, logic and slider values as a new entry">+ Add current</button>
+        <button id="set-update" title="Save the current look into the selected entry">Update</button>
+        <button id="set-new" title="Start a new, empty set">New</button>
+      </div>
+      <div class="row">
+        <button id="set-open" title="Open a .set.json file (or drop it on the window)">Open set…</button>
+        <button id="set-save" title="Download the set as one self-contained .set.json (scenes and models included)">Save set…</button>
+        <button id="set-install" hidden title="Copy the set's scenes, models and logics into scenes/, models/ and logics/">Install into library</button>
+      </div>
+      <input type="file" id="set-file" accept=".json,application/json" hidden />
     </section>
 
     <section>
@@ -115,6 +133,7 @@
         </select>
         <textarea id="claude-prompt" rows="4" placeholder="e.g. A flock of birds that scatters on every snare and regroups into a mountain range on the chorus"></textarea>
         <label class="check"><input type="checkbox" id="claude-audio" checked /> Describe what's playing now to Claude</label>
+        <label class="check"><input type="checkbox" id="claude-to-set" /> Add new scenes to the set</label>
         <button id="claude-go" class="accent">Generate</button>
         <div id="claude-log" class="log"></div>
       </div>

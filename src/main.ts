@@ -3,6 +3,7 @@ import { api, HOSTED, type Library } from './ui/api';
 import { Controls } from './ui/controls';
 import { DEFAULT_MACROS, type LogicDefinition, type PointModel, type SceneDefinition } from './engine/types';
 import { loadPointModel, invalidateModel } from './engine/models';
+import { SetManager, entryMacros, type SetEntry } from './ui/sets';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const store = {
@@ -22,6 +23,42 @@ const engine = new Engine($('#stage'), {
 });
 const controls = new Controls($('#gui'), engine);
 
+// ---------- Scene sets ----------
+const sets = new SetManager($('#set-section'), {
+  async apply(e: SetEntry) {
+    if (!(await loadScene(e.scene, true))) return false;
+    try {
+      const logic = typeof e.logic === 'string' ? await api.loadLogic(e.logic) : structuredClone(e.logic);
+      engine.setLogic(logic);
+      currentLogicId = logic.id;
+      Object.assign(engine.logic.baseMacros, entryMacros(e, logic));
+      for (const [k, v] of Object.entries(e.params ?? {})) {
+        const spec = engine.logic.paramSpecs[k];
+        if (spec && typeof v === 'number' && isFinite(v)) engine.logic.baseParams[k] = Math.min(spec.max, Math.max(spec.min, v));
+      }
+    } catch (err) {
+      showToast(`Entry "${e.label}": could not load logic: ${(err as Error).message}`, false);
+    }
+    controls.rebuild();
+    renderLists();
+    return true;
+  },
+  capture() {
+    if (!engine.scene) return null;
+    return {
+      label: engine.scene.name,
+      scene: engine.scene.id,
+      logic: structuredClone(engine.logic.logic),
+      macros: { ...engine.logic.baseMacros },
+      params: { ...engine.logic.baseParams },
+    };
+  },
+  libraryScenes: () => library.scenes,
+  loadLibraryScene: (id) => api.loadScene(id),
+  changed() { renderLists(); },
+  toast: (msg) => showToast(msg, false),
+});
+
 let library: Library = { scenes: [], logics: [], models: [] };
 let currentLogicId = store.get('logic', '');
 
@@ -33,7 +70,7 @@ async function refreshLibrary() {
 function renderLists() {
   const sceneList = $('#scene-list');
   sceneList.innerHTML = '';
-  for (const s of library.scenes) {
+  for (const s of [...library.scenes, ...sets.extraScenes()]) {
     const li = document.createElement('li');
     li.className = engine.scene?.id === s.id ? 'active' : '';
     li.innerHTML = `<div><span class="name"></span><span class="badge"></span></div><div class="desc"></div>`;
@@ -68,20 +105,23 @@ async function loadModels(def: SceneDefinition): Promise<Record<string, PointMod
   const count = Engine.particleCount(def);
   const out: Record<string, PointModel> = {};
   await Promise.all((def.models ?? []).map(async (mid) => {
-    if (!library.models.some((m) => m.id === mid)) throw new Error(`Model "${mid}" not found. Put ${mid}.glb in models/.`);
-    out[mid] = await loadPointModel(mid, await api.modelUrl(mid, modelVersions[mid] ?? 0), count);
+    const fromSet = sets.modelUrl(mid);
+    if (!fromSet && !library.models.some((m) => m.id === mid)) throw new Error(`Model "${mid}" not found. Put ${mid}.glb in models/.`);
+    out[mid] = await loadPointModel(mid, fromSet ?? await api.modelUrl(mid, modelVersions[mid] ?? 0), count);
   }));
   return out;
 }
 
-async function loadScene(id: string): Promise<boolean> {
+async function loadScene(id: string, fromSet = false): Promise<boolean> {
   try {
-    const def = await api.loadScene(id);
+    // A scene set may carry its own version of a scene; it wins over the library's.
+    const def = sets.sceneDef(id) ?? await api.loadScene(id);
     const models = await loadModels(def);
     const ok = engine.setScene(def, models);
     if (ok) {
       store.set('scene', id);
-      if (!currentLogicId && def.defaultLogic) await loadLogic(def.defaultLogic);
+      if (!fromSet) sets.sceneChanged(id);
+      if (!fromSet && !currentLogicId && def.defaultLogic) await loadLogic(def.defaultLogic);
     }
     controls.rebuild();
     renderLists();
@@ -371,6 +411,7 @@ async function runClaude(req: { mode: string; prompt: string; sceneId?: string; 
     await refreshLibrary();
     if (res.kind === 'scene') {
       const ok = await loadScene(res.id);
+      if (ok && $<HTMLInputElement>('#claude-to-set').checked) sets.addCurrent();
       logLine(`✓ ${ok ? 'Loaded' : 'Saved (but failed to run)'} scene "${res.name}" (scenes/${res.id}.ts, ${secs}s)\n${res.summary}`, ok ? 'ok' : 'err');
     } else {
       await loadLogic(res.id);
@@ -489,6 +530,9 @@ function handleKey(e: KeyboardEvent) {
     if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen();
   }
   if (e.key === ' ') { engine.paused = !engine.paused; e.preventDefault(); }
+  if (/^[1-9]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) sets.go(+e.key - 1);
+  if (e.key === 'PageDown') { sets.next(); e.preventDefault(); }
+  if (e.key === 'PageUp') { sets.prev(); e.preventDefault(); }
   if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && audio.kind === 'file') {
     skipFile((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 30 : 5));
     e.preventDefault();
@@ -510,6 +554,7 @@ window.addEventListener('drop', async (e) => {
   if (!files.length) return;
   e.preventDefault();
   for (const file of files) {
+    if (/\.json$/i.test(file.name)) { await sets.openFile(file); continue; }
     if (!/\.glb$/i.test(file.name)) {
       showToast(`"${file.name}" isn't a .glb model. In Blender: File → Export → glTF 2.0, format "glTF Binary (.glb)".`, false);
       continue;
@@ -536,6 +581,7 @@ engine.renderer.setInsetRight($('#panel').offsetWidth);
 (async () => {
   applyOnline();
   await refreshLibrary();
+  await sets.restore();
   if (currentLogicId && !library.logics.some((l) => l.id === currentLogicId)) currentLogicId = '';
   const sceneId = store.get('scene', 'morphing-forms');
   const ok = await loadScene(library.scenes.some((s) => s.id === sceneId) ? sceneId : 'morphing-forms');
@@ -545,4 +591,4 @@ engine.renderer.setInsetRight($('#panel').offsetWidth);
 })();
 
 // Debug handle (handy in the devtools console and for future tooling).
-(window as unknown as { vis: unknown }).vis = { engine, audio, api };
+(window as unknown as { vis: unknown }).vis = { engine, audio, api, sets };

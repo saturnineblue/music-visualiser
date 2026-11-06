@@ -138,6 +138,10 @@ setup(ctx) {
 
 Parts are what make objects musical: animate each one differently (`if (m.parts[i] === roofIndex) …`). Get an index with `m.partNames.indexOf('roof')` in `setup` (−1 if the model has no such part) and keep it in `ctx.state`. Points are shuffled, so any subset is spread evenly over the surface. The same points come back every load, so effects stay stable.
 
+## Scene sets
+
+Scenes can be packed into self-contained scene-set files (`*.set.json`, see [SETS.md](SETS.md)) and run from there, compiled and loaded from a blob URL. That's another reason a scene must have no runtime imports and must get everything, models included, through `ctx`.
+
 ## Logic file format (`logics/<id>.json`)
 
 ```json

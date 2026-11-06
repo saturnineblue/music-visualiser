@@ -65,6 +65,28 @@ export const api = {
   status: () => fetch('/api/status').then((r) => json<{ hasKey: boolean; model: string; blender: boolean }>(r)),
   onlineCheck: () => fetch('/api/online-check').then((r) => json<{ reachable: boolean }>(r)),
 
+  /** A library scene's TypeScript source, or null if there is no such scene. */
+  async sceneSource(id: string): Promise<string | null> {
+    if (HOSTED) return (await hosted()).sceneSource(id);
+    const r = await fetch(`/api/scenes/${id}/source`);
+    return r.ok ? r.text() : null;
+  },
+
+  /** A library scene compiled to plain JS (what scene-set files carry), or null. */
+  async sceneCompiled(id: string): Promise<string | null> {
+    if (HOSTED) return (await hosted()).sceneCompiled(id);
+    const r = await fetch(`/api/scenes/${id}/compiled`);
+    return r.ok ? r.text() : null;
+  },
+
+  /** Compile scene TS to JS (local server only; the hosted site can't compile). */
+  compileScene: (id: string, source: string) => HOSTED ? notHosted() as Promise<string> :
+    fetch('/api/compile', { method: 'POST', body: JSON.stringify({ id, source }) }).then((r) => json<{ js: string }>(r)).then((r) => r.js),
+
+  installSet: (body: { scenes: Record<string, string>; models: Record<string, string>; logics: Record<string, unknown>; overwrite?: boolean }) =>
+    HOSTED ? notHosted() as Promise<{ installed: string[]; conflicts: string[] }> :
+    fetch('/api/sets/install', { method: 'POST', body: JSON.stringify(body) }).then((r) => json<{ installed: string[]; conflicts: string[] }>(r)),
+
   claude: (body: Record<string, unknown>) => HOSTED ? notHosted() :
     fetch('/api/claude', { method: 'POST', body: JSON.stringify(body) })
       .then((r) => json<{ kind: 'scene' | 'logic'; id: string; name: string; summary: string }>(r)),
