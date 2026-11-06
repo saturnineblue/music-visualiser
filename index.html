@@ -59,13 +59,13 @@
 
     <section id="set-section">
       <h2>Set <span class="hint">cues for a show</span></h2>
-      <div class="set-head"><span id="set-name" title="Click to rename the set"></span></div>
+      <div class="set-head"><span id="set-name" title="Click to rename the set"></span> <span id="set-dirty" class="hint" hidden>· unsaved changes</span></div>
       <ol id="set-list" class="list set-list"></ol>
       <div id="set-empty" class="hint">Pick a scene, logic and sliders, then <b>+ Add current</b>. Switch with a click, keys 1–9, or Page Up / Page Down.</div>
       <div class="row">
         <button id="set-add" class="accent" title="Add the current scene, logic and slider values as a new entry">+ Add current</button>
         <button id="set-update" title="Save the current look into the selected entry">Update</button>
-        <button id="set-new" title="Start a new, empty set">New</button>
+        <button id="set-clear" title="Empty the set and start designing a new one from scratch (asks first if there are unsaved changes)">Clear set</button>
       </div>
       <div class="row">
         <button id="set-open" title="Open a .set.json file (or drop it on the window)">Open set…</button>

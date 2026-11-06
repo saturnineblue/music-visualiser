@@ -3,6 +3,7 @@
 A **scene set** is an ordered list of looks ("entries") for a show. Each entry is a scene, a logic and the slider values to use. A set is saved as **one self-contained JSON file**: besides the entries, it carries the code of every scene it uses and every 3D model those scenes need. So it plays anywhere, including the hosted site, even if those scenes were never deployed there.
 
 In the app (Set section of the panel):
+- **Clear set** empties the set (entries, its scenes and models) to start a new one from scratch. **Open set…** replaces the current set. Both ask first only if the current set has unsaved changes, which the panel marks with "· unsaved changes".
 - **+ Add current**: adds the current scene, logic (including live mapping tweaks) and slider values as an entry. **Update** overwrites the selected entry with the current look.
 - Click an entry, press **1–9**, or **Page Up / Page Down** to switch. These keys also work in the projector window.
 - **Save set…** downloads `<name>.set.json` with everything embedded. **Open set…** (or dropping the file on the window) loads one.

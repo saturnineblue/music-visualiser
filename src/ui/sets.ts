@@ -55,6 +55,7 @@ export interface SetHooks {
 }
 
 const STORE_KEY = 'vis.set';
+const DIRTY_KEY = 'vis.setDirty';
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'set';
 
 function toBase64(buf: ArrayBuffer): string {
@@ -89,6 +90,8 @@ export function parseSet(raw: unknown): SetFile {
 export class SetManager {
   set: SetFile = { format: SET_FORMAT, version: 1, name: 'Untitled set', entries: [] };
   active = -1;
+  /** Changed since it was last opened, saved or cleared. */
+  dirty = false;
   /** Bundled scenes that differ from (or are missing in) the library: these run from the set. */
   private bundledDefs = new Map<string, SceneDefinition>();
   private modelUrls = new Map<string, string>();
@@ -96,7 +99,7 @@ export class SetManager {
   constructor(private root: HTMLElement, private hooks: SetHooks) {
     root.querySelector<HTMLButtonElement>('#set-add')!.onclick = () => this.addCurrent();
     root.querySelector<HTMLButtonElement>('#set-update')!.onclick = () => this.updateActive();
-    root.querySelector<HTMLButtonElement>('#set-new')!.onclick = () => this.newSet();
+    root.querySelector<HTMLButtonElement>('#set-clear')!.onclick = () => this.clearSet();
     root.querySelector<HTMLButtonElement>('#set-open')!.onclick = () => this.fileInput.click();
     root.querySelector<HTMLButtonElement>('#set-save')!.onclick = () => this.save();
     root.querySelector<HTMLButtonElement>('#set-install')!.onclick = () => this.install();
@@ -145,8 +148,7 @@ export class SetManager {
     if (!e) return;
     this.set.entries.push(e);
     this.active = this.set.entries.length - 1;
-    this.persist();
-    this.render();
+    this.edited();
   }
 
   // ---------- Editing ----------
@@ -157,12 +159,25 @@ export class SetManager {
     if (!e) return;
     e.label = this.set.entries[this.active].label;
     this.set.entries[this.active] = e;
+    this.edited();
+  }
+
+  private edited() {
+    this.dirty = true;
     this.persist();
     this.render();
   }
 
-  private newSet() {
-    if (this.set.entries.length && !confirm(`Start a new, empty set? Unsaved changes to "${this.set.name}" are lost.`)) return;
+  /** True if it's fine to replace the current set (nothing unsaved, or the user agreed). */
+  private confirmDiscard(action: string) {
+    if (!this.dirty || !this.set.entries.length) return true;
+    return confirm(`"${this.set.name}" has unsaved changes (${this.set.entries.length} entries).\n\n` +
+      `${action} anyway? To keep them, cancel and use "Save set…" first.`);
+  }
+
+  /** Empty the set (entries, its bundled scenes and models) to start designing from scratch. */
+  clearSet() {
+    if (!this.confirmDiscard('Clear the set')) return;
     this.load({ format: SET_FORMAT, version: 1, name: 'Untitled set', entries: [] }, new Map());
     this.hooks.changed('opened');
   }
@@ -171,8 +186,7 @@ export class SetManager {
     const name = prompt('Set name:', this.set.name);
     if (!name) return;
     this.set.name = name;
-    this.persist();
-    this.render();
+    this.edited();
   }
 
   // ---------- Open ----------
@@ -180,6 +194,7 @@ export class SetManager {
   async openFile(file: File) {
     try {
       const set = parseSet(JSON.parse(await file.text()));
+      if (!this.confirmDiscard(`Open "${set.name}"`)) return;
       await this.openSet(set, true);
       this.hooks.toast(`Opened "${set.name}" (${set.entries.length} entries). Click an entry or press 1–9 to switch, Page Up/Down to step.`);
     } catch (e) {
@@ -226,6 +241,7 @@ export class SetManager {
     this.set = set;
     this.bundledDefs = defs;
     this.active = -1;
+    this.dirty = false;
     this.persist();
     this.render();
   }
@@ -276,6 +292,9 @@ export class SetManager {
       a.download = `${slug(this.set.name)}.set.json`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      this.dirty = false;
+      this.persist();
+      this.render();
       this.hooks.toast(`Saved "${a.download}" (${(blob.size / 1024).toFixed(0)} KB): ${packed.entries.length} entries, ` +
         `${Object.keys(packed.scenes ?? {}).length} scenes, ${Object.keys(packed.models ?? {}).length} models.`);
     } catch (e) {
@@ -330,6 +349,7 @@ export class SetManager {
 
   render() {
     this.root.querySelector('#set-name')!.textContent = this.set.name;
+    this.root.querySelector<HTMLElement>('#set-dirty')!.hidden = !(this.dirty && this.set.entries.length);
     const list = this.root.querySelector<HTMLOListElement>('#set-list')!;
     list.innerHTML = '';
     this.set.entries.forEach((e, i) => {
@@ -352,8 +372,7 @@ export class SetManager {
         if (a === 'down' && i < E.length - 1) { [E[i + 1], E[i]] = [E[i], E[i + 1]]; if (this.active === i) this.active++; else if (this.active === i + 1) this.active--; }
         if (a === 'rename') { const n = prompt('Entry name:', e.label); if (n) e.label = n; }
         if (a === 'del') { E.splice(i, 1); if (this.active === i) this.active = -1; else if (this.active > i) this.active--; }
-        this.persist();
-        this.render();
+        this.edited();
       };
       list.appendChild(li);
     });
@@ -368,6 +387,7 @@ export class SetManager {
       const json = JSON.stringify(this.set);
       if (json.length < 4_000_000) localStorage.setItem(STORE_KEY, json);
       else localStorage.removeItem(STORE_KEY);
+      localStorage.setItem(DIRTY_KEY, this.dirty ? '1' : '0');
     } catch { /* quota: fine */ }
   }
 
@@ -375,8 +395,12 @@ export class SetManager {
   async restore() {
     const raw = localStorage.getItem(STORE_KEY);
     if (!raw) return this.render();
+    const wasDirty = localStorage.getItem(DIRTY_KEY) === '1';
     try {
       await this.openSet(parseSet(JSON.parse(raw)), false);
+      this.dirty = wasDirty;
+      this.persist();
+      this.render();
     } catch (e) {
       console.warn('Could not restore the scene set:', e);
       this.render();
