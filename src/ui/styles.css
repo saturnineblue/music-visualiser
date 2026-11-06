@@ -91,3 +91,5 @@ h2 .hint { text-transform: none; letter-spacing: 0; margin-left: 6px; }
 /* lil-gui inside the panel */
 #gui .lil-gui { --width: 100%; --background-color: transparent; --title-background-color: rgba(255,255,255,0.04); --font-size: 12px; }
 #gui .lil-gui.root { width: 100%; }
+
+[hidden] { display: none !important; }

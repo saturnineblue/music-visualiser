@@ -1,5 +1,5 @@
 import { Engine } from './engine/engine';
-import { api, type Library } from './ui/api';
+import { api, HOSTED, type Library } from './ui/api';
 import { Controls } from './ui/controls';
 import { DEFAULT_MACROS, type LogicDefinition } from './engine/types';
 
@@ -203,12 +203,18 @@ $('#save-logic').onclick = async () => {
 };
 
 // ---------- Online / offline + Claude ----------
-let online = store.get('online', '0') === '1';
+let online = !HOSTED && store.get('online', '0') === '1';
 let hasKey = false;
 const toggle = $<HTMLInputElement>('#online-toggle');
 toggle.checked = online;
 
 async function applyOnline() {
+  if (HOSTED) {
+    $('#online-status').innerHTML =
+      'Hosted demo: the built-in scenes and logics only. To make new ones with Claude, ' +
+      '<a href="https://github.com/saturnineblue/music-visualiser" target="_blank" rel="noopener">run it locally</a>.';
+    return;
+  }
   $('#online-label').textContent = online ? 'Online' : 'Offline';
   $('#claude-online').hidden = !online;
   $('#claude-offline').hidden = online;
@@ -337,6 +343,9 @@ window.addEventListener('keydown', (e) => {
 });
 
 // ---------- Boot ----------
+if (HOSTED) {
+  for (const sel of ['.switch', '#claude-section', '#new-scene', '#save-logic']) ($(sel) as HTMLElement).hidden = true;
+}
 engine.renderer.setInsetRight($('#panel').offsetWidth);
 (async () => {
   applyOnline();

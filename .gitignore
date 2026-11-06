@@ -4,3 +4,4 @@ dist
 scenes/.history
 logics/.history
 .DS_Store
+.vercel

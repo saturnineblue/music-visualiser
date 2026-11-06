@@ -11,6 +11,8 @@ npm run dev        # http://127.0.0.1:5173
 
 Pick an input: Microphone / line-in, Audio file, or **Demo beat** (a built-in synth loop, handy for testing). Keys: **H** hides the panel, **F** toggles fullscreen, **Space** pauses.
 
+**Live demo:** https://music-visualiser-theta.vercel.app. The hosted version is a static build (`npm run build`) with the built-in scenes and logics bundled in. It is read-only: creating scenes, saving logics and Claude generation need the local server, so run it locally for those. Redeploy with `vercel deploy --prod --scope sergey-fadeevs-projects`.
+
 ### Online mode (optional)
 
 ```bash
