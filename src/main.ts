@@ -69,7 +69,7 @@ async function loadModels(def: SceneDefinition): Promise<Record<string, PointMod
   const out: Record<string, PointModel> = {};
   await Promise.all((def.models ?? []).map(async (mid) => {
     if (!library.models.some((m) => m.id === mid)) throw new Error(`Model "${mid}" not found. Put ${mid}.glb in models/.`);
-    out[mid] = await loadPointModel(mid, api.modelUrl(mid, modelVersions[mid] ?? 0), count);
+    out[mid] = await loadPointModel(mid, await api.modelUrl(mid, modelVersions[mid] ?? 0), count);
   }));
   return out;
 }

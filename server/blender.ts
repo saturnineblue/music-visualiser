@@ -37,6 +37,7 @@ export class BlenderSession {
   private log: string[] = [];
   private closed = false;
   private exitError: Error | null = null;
+  private chain: Promise<unknown> = Promise.resolve();
 
   private constructor(bin: string) {
     // Run with a minimal environment: Claude-written code never sees API keys or other secrets.
@@ -69,11 +70,19 @@ export class BlenderSession {
     return s;
   }
 
-  /** Run one command; kills the session if it takes longer than timeoutMs. */
-  async call(cmd: Record<string, unknown>, timeoutMs = 120000): Promise<BlenderReply> {
-    if (this.closed) throw this.exitError ?? new Error('Blender session is closed');
-    this.proc.stdin!.write(JSON.stringify(cmd) + '\n');
-    return this.next(timeoutMs);
+  /**
+   * Run one command; kills the session if it takes longer than timeoutMs.
+   * Calls are queued: Blender answers one command at a time, and Claude may ask for several
+   * tools in one turn (which the tool runner runs concurrently).
+   */
+  call(cmd: Record<string, unknown>, timeoutMs = 120000): Promise<BlenderReply> {
+    const run = this.chain.then(() => {
+      if (this.closed) throw this.exitError ?? new Error('Blender session is closed');
+      this.proc.stdin!.write(JSON.stringify(cmd) + '\n');
+      return this.next(timeoutMs);
+    });
+    this.chain = run.then(() => undefined, () => undefined);
+    return run;
   }
 
   recentLog(lines = 15) {

@@ -144,16 +144,6 @@ export function visualiserApi(env: Record<string, string>): Plugin {
     configureServer(server: ViteDevServer) {
       fs.mkdirSync(MODELS, { recursive: true });
       server.watcher.add([SCENES, LOGICS, MODELS]);
-      // New / deleted library files (handleHotUpdate only sees changes).
-      const onAddRemove = (file: string) => {
-        if (file.includes(`${path.sep}.history${path.sep}`)) return;
-        const kind = libraryKind(file);
-        if (!kind) return;
-        const id = path.basename(file).replace(/\.(ts|json|glb)$/, '');
-        server.ws.send({ type: 'custom', event: 'vis:library', data: { kind, id } });
-      };
-      server.watcher.on('add', onAddRemove);
-      server.watcher.on('unlink', onAddRemove);
 
       server.middlewares.use(async (req, res, next) => {
         const url = new URL(req.url ?? '/', 'http://localhost');
@@ -285,16 +275,18 @@ export function visualiserApi(env: Record<string, string>): Plugin {
       });
     },
 
-    // Library files: notify the app instead of reloading the page (keeps audio running).
-    handleHotUpdate({ file, server }) {
+    // Library files (created, changed or deleted): notify the app instead of letting Vite reload
+    // the page, so audio keeps running and long Claude generations aren't interrupted.
+    // (The older handleHotUpdate hook only sees changes, not new or deleted files.)
+    hotUpdate({ file }) {
       const kind = libraryKind(file);
       const inLibrary = [SCENES, LOGICS, MODELS].some((d) => file.startsWith(d + path.sep));
-      if (kind || inLibrary) {
-        if (!kind) return [];
+      if (!kind && !inLibrary) return;
+      if (kind && this.environment.name === 'client') {
         const id = path.basename(file).replace(/\.(ts|json|glb)$/, '');
-        server.ws.send({ type: 'custom', event: 'vis:library', data: { kind, id } });
-        return [];
+        this.environment.hot.send({ type: 'custom', event: 'vis:library', data: { kind, id } });
       }
+      return [];
     },
   };
 }

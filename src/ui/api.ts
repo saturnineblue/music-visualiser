@@ -9,37 +9,8 @@ import type { LogicDefinition, SceneDefinition } from '../engine/types';
  */
 export const HOSTED = !import.meta.env.DEV;
 
-// Lazy globs: nothing is imported until the hosted build asks for it (dev mode uses the server).
-const sceneModules = import.meta.glob<{ default: SceneDefinition }>('/scenes/*.ts');
-const sceneSources = import.meta.glob<string>('/scenes/*.ts', { query: '?raw', import: 'default' });
-const logicModules = import.meta.glob<LogicDefinition>('/logics/*.json', { import: 'default' });
-const modelUrls = import.meta.glob<string>('/models/*.glb', { eager: true, query: '?url', import: 'default' });
-const fileId = (path: string) => path.replace(/^.*\/|\.(ts|json|glb)$/g, '');
-
-function grab(src: string, key: string) {
-  const m = src.match(new RegExp(`${key}\\s*:\\s*(['"\`])((?:\\\\.|(?!\\1).)*)\\1`));
-  return m ? m[2] : undefined;
-}
-
-async function staticLibrary(): Promise<Library> {
-  const scenes = await Promise.all(
-    Object.entries(sceneSources)
-      .filter(([p]) => !fileId(p).startsWith('_') && fileId(p) !== 'my-scene')
-      .map(async ([p, load]) => {
-        const src = await load();
-        const id = fileId(p);
-        return { id, name: grab(src, 'name') ?? id, description: grab(src, 'description') ?? '', author: grab(src, 'author') ?? '' };
-      }),
-  );
-  const logics = await Promise.all(
-    Object.entries(logicModules).map(async ([p, load]) => {
-      const j = await load();
-      return { id: fileId(p), name: j.name ?? fileId(p), description: j.description ?? '', author: j.author ?? '' };
-    }),
-  );
-  const models = Object.keys(modelUrls).map((p) => ({ id: fileId(p), parts: [] }));
-  return { scenes, logics, models };
-}
+// Production-only bundle of the library; never loaded in dev (see hostedLibrary.ts).
+const hosted = () => import('./hostedLibrary');
 
 const notHosted = () => Promise.reject(new Error('Not available in the hosted version. Run the app locally (npm run dev) for this.'));
 
@@ -54,14 +25,12 @@ async function json<T>(r: Response): Promise<T> {
 }
 
 export const api = {
-  library: () => (HOSTED ? staticLibrary() : fetch('/api/library').then((r) => json<Library>(r))),
+  library: async () => (HOSTED ? (await hosted()).staticLibrary() : fetch('/api/library').then((r) => json<Library>(r))),
 
   async loadScene(id: string): Promise<SceneDefinition> {
     let mod: { default: SceneDefinition };
     if (HOSTED) {
-      const load = sceneModules[`/scenes/${id}.ts`];
-      if (!load) throw new Error(`Unknown scene "${id}"`);
-      mod = await load();
+      mod = await (await hosted()).loadSceneModule(id);
     } else {
       // Cache-busting query so edited files are re-evaluated.
       mod = await import(/* @vite-ignore */ `/scenes/${id}.ts?t=${Date.now()}`);
@@ -73,12 +42,8 @@ export const api = {
   },
 
   /** URL of models/<id>.glb. `version` busts the cache after the file changes (dev). */
-  modelUrl(id: string, version = 0): string {
-    if (HOSTED) {
-      const url = modelUrls[`/models/${id}.glb`];
-      if (!url) throw new Error(`Unknown model "${id}"`);
-      return url;
-    }
+  async modelUrl(id: string, version = 0): Promise<string> {
+    if (HOSTED) return (await hosted()).modelUrl(id);
     return `/models/${id}.glb?v=${version}`;
   },
 
@@ -91,9 +56,7 @@ export const api = {
 
   async loadLogic(id: string): Promise<LogicDefinition> {
     if (!HOSTED) return fetch(`/api/logics/${id}`).then((r) => json<LogicDefinition>(r));
-    const load = logicModules[`/logics/${id}.json`];
-    if (!load) throw new Error(`Unknown logic "${id}"`);
-    return structuredClone(await load());
+    return (await hosted()).loadLogic(id);
   },
 
   saveLogic: (logic: LogicDefinition) => HOSTED ? notHosted() :
