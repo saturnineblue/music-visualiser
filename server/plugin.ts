@@ -3,6 +3,8 @@ import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin, ViteDevServer } from 'vite';
 import { generate, type GenerateRequest } from './claude';
+import { findBlender } from './blender';
+import { generateObject } from './objectAgent';
 
 /**
  * Local API, served by the Vite dev server (so there's a single `npm run dev` process):
@@ -135,6 +137,7 @@ function libraryKind(file: string): 'scene' | 'logic' | 'model' | null {
 export function visualiserApi(env: Record<string, string>): Plugin {
   const apiKey = env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
   const defaultModel = env.CLAUDE_MODEL || 'claude-opus-5-5';
+  const blenderPath = () => findBlender(env.BLENDER_PATH);
 
   return {
     name: 'visualiser-api',
@@ -158,7 +161,7 @@ export function visualiserApi(env: Record<string, string>): Plugin {
         if (!p.startsWith('/api/')) return next();
         try {
           if (p === '/api/status' && req.method === 'GET') {
-            return send(res, 200, { hasKey: !!apiKey, model: defaultModel });
+            return send(res, 200, { hasKey: !!apiKey, model: defaultModel, blender: !!blenderPath() });
           }
 
           if (p === '/api/online-check') {
@@ -225,8 +228,33 @@ export function visualiserApi(env: Record<string, string>): Plugin {
               if (fs.existsSync(f)) body.sceneSource = fs.readFileSync(f, 'utf8');
             }
             const apiDoc = fs.readFileSync(path.join(DOCS, 'SCENE_API.md'), 'utf8');
-            const exampleScene = fs.readFileSync(path.join(SCENES, 'morphing-forms.ts'), 'utf8');
+            const exampleFile = (name: string) => {
+              const f = path.join(SCENES, name);
+              return fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '';
+            };
+            let exampleScene = exampleFile('morphing-forms.ts');
             const exampleLogic = fs.readFileSync(path.join(LOGICS, 'balanced.json'), 'utf8');
+
+            const progress = (p: { text: string; image?: string }) =>
+              server.ws.send({ type: 'custom', event: 'vis:claude-progress', data: p });
+
+            let modelNote = '';
+            if (body.mode === 'new-object') {
+              const bin = blenderPath();
+              if (!bin) return send(res, 400, { error: 'Blender not found. Install it, or set BLENDER_PATH in .env to the Blender executable, then restart `npm run dev`.' });
+              const obj = await generateObject({
+                prompt: body.prompt, apiKey, model: body.model || defaultModel,
+                blenderPath: bin, modelsDir: MODELS, onProgress: progress,
+              });
+              progress({ text: `Writing a scene for "${obj.name}"…` });
+              modelNote = `Model: ${obj.summary}`;
+              exampleScene = exampleFile('dream-house.ts') || exampleScene; // shows how to animate model parts
+              body.mode = 'new-scene';
+              body.prompt =
+                `A scene built around the 3D model "${obj.id}" (${obj.name}; parts: ${obj.parts.join(', ')}), ` +
+                `which was just made for this request: "${body.prompt}". Declare models: ['${obj.id}'] and make the music ` +
+                `animate the parts separately in ways that suit each part, as the example scene does with its house.`;
+            }
 
             const out = await generate(body, { apiKey, defaultModel, apiDoc, exampleScene, exampleLogic, models: library().models });
 
@@ -237,7 +265,7 @@ export function visualiserApi(env: Record<string, string>): Plugin {
               // Make sure the file's id matches its filename.
               const code = out.code.replace(/(\bid\s*:\s*)(['"`])[^'"`]*\2/, `$1'${id}'`);
               fs.writeFileSync(path.join(SCENES, id + '.ts'), code);
-              return send(res, 200, { kind: 'scene', id, name: out.name, summary: out.summary });
+              return send(res, 200, { kind: 'scene', id, name: out.name, summary: [modelNote, out.summary].filter(Boolean).join('\n') });
             } else {
               const editing = body.mode === 'edit-logic';
               const id = editing ? safeId(out.logic.id) : uniqueId(LOGICS, safeId(out.logic.id), '.json');

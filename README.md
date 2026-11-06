@@ -21,6 +21,8 @@ cp .env.example .env   # then set ANTHROPIC_API_KEY=...
 
 Restart `npm run dev`, then flip the **Online** switch. While Offline, the app makes no network requests. The API key stays on the local server and is never sent to the browser.
 
+**New 3D object (Blender):** in the Ask Claude panel, describe an object ("a lighthouse on rocks with a lamp room…"). Claude models it in a headless Blender on your machine (no window opens), checks preview renders from two angles and fixes problems, then saves `models/<id>.glb` plus an editable `models/<id>.blend`, and writes a scene that animates its parts. It takes a few minutes and you can watch the progress and previews in the panel. Needs Blender installed (found automatically, or set `BLENDER_PATH` in `.env`). Claude's Blender code runs on your computer with your user's permissions, but without your environment variables or API key.
+
 ## How it's organised
 
 ```

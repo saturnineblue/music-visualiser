@@ -99,7 +99,7 @@ export const api = {
   saveLogic: (logic: LogicDefinition) => HOSTED ? notHosted() :
     fetch('/api/logics', { method: 'POST', body: JSON.stringify(logic) }).then((r) => json<{ id: string }>(r)),
 
-  status: () => fetch('/api/status').then((r) => json<{ hasKey: boolean; model: string }>(r)),
+  status: () => fetch('/api/status').then((r) => json<{ hasKey: boolean; model: string; blender: boolean }>(r)),
   onlineCheck: () => fetch('/api/online-check').then((r) => json<{ reachable: boolean }>(r)),
 
   claude: (body: Record<string, unknown>) => HOSTED ? notHosted() :

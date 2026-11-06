@@ -37,7 +37,7 @@ export const LogicOutput = z.object({
   }),
 });
 
-export type GenerateMode = 'new-scene' | 'edit-scene' | 'fix-scene' | 'new-logic' | 'edit-logic';
+export type GenerateMode = 'new-scene' | 'edit-scene' | 'fix-scene' | 'new-logic' | 'edit-logic' | 'new-object';
 
 export interface GenerateRequest {
   mode: GenerateMode;

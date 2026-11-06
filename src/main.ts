@@ -252,6 +252,9 @@ async function applyOnline() {
     const s = await api.status();
     hasKey = s.hasKey;
     $<HTMLSelectElement>('#claude-model').value = s.model;
+    const objectOption = $<HTMLOptionElement>('#claude-mode option[value="new-object"]');
+    objectOption.disabled = !s.blender;
+    objectOption.textContent = s.blender ? 'New 3D object (Blender)' : 'New 3D object (needs Blender)';
     if (!s.hasKey) {
       status.innerHTML = '<span style="color:var(--warn)">No ANTHROPIC_API_KEY. Add it to .env and restart <code>npm run dev</code>.</span>';
       return;
@@ -291,6 +294,23 @@ function logLine(text: string, cls = '') {
 }
 function showInfo(text: string) { logLine(text, 'ok'); }
 
+// Live progress from long generations (New 3D object): text lines and preview renders.
+if (import.meta.hot) {
+  import.meta.hot.on('vis:claude-progress', ({ text, image }: { text: string; image?: string }) => {
+    if (!busy) return;
+    const div = document.createElement('div');
+    div.className = 'progress';
+    div.textContent = text;
+    if (image) {
+      const img = document.createElement('img');
+      img.src = image;
+      img.alt = text;
+      div.appendChild(img);
+    }
+    log.prepend(div);
+  });
+}
+
 let busy = false;
 async function runClaude(req: { mode: string; prompt: string; sceneId?: string; error?: string }) {
   if (!online) return showToast('Switch to Online to use Claude.', false);
@@ -329,6 +349,17 @@ async function runClaude(req: { mode: string; prompt: string; sceneId?: string; 
     btn.textContent = 'Generate';
   }
 }
+const PLACEHOLDERS: Record<string, string> = {
+  'new-scene': 'e.g. A flock of birds that scatters on every snare and regroups into a mountain range on the chorus',
+  'edit-scene': 'e.g. Make it calmer and add a slow colour drift',
+  'new-logic': 'e.g. Bass swells everything, hi-hats add sparkle, beats flash',
+  'edit-logic': 'e.g. Less reaction to vocals, stronger kicks',
+  'new-object': 'e.g. A lighthouse on rocks with a lamp room, a spiral of windows and waves around the base. Takes a few minutes: Claude models it in Blender, checks renders, then writes a scene for it.',
+};
+$('#claude-mode').onchange = () => {
+  $<HTMLTextAreaElement>('#claude-prompt').placeholder = PLACEHOLDERS[$<HTMLSelectElement>('#claude-mode').value] ?? '';
+};
+
 $('#claude-go').onclick = () => {
   const prompt = $<HTMLTextAreaElement>('#claude-prompt').value.trim();
   if (!prompt) return;

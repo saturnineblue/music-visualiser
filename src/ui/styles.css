@@ -59,6 +59,8 @@ h2 .hint { text-transform: none; letter-spacing: 0; margin-left: 6px; }
 .log { margin-top: 8px; font-size: 12px; color: var(--muted); white-space: pre-wrap; }
 .log .ok { color: var(--ok); }
 .log .err { color: var(--err); }
+.log .progress { opacity: 0.85; }
+.log img { display: block; width: 100%; max-width: 280px; margin: 4px 0; border-radius: 6px; }
 
 /* Switch */
 .switch { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
