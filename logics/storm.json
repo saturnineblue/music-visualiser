@@ -1,0 +1,16 @@
+{
+  "id": "storm",
+  "name": "Storm",
+  "description": "Brooding night storm: bass swells the energy, beats strike hard, mids brighten the moon, highs stir the chaos, onsets intensify the lightning.",
+  "author": "claude",
+  "base": { "intensity": 0.45, "chaos": 0.15, "speed": 0.8, "hue": 0.64, "hueSpread": 0.2, "brightness": 0.9, "size": 1, "morph": 0, "impulse": 0 },
+  "mappings": [
+    { "source": "bass", "target": "macro.intensity", "amount": 1.0, "curve": "square", "attack": 0.02, "release": 0.35, "mode": "add" },
+    { "source": "pulse", "target": "macro.impulse", "amount": 1.4, "curve": "linear", "attack": 0, "release": 0.12, "mode": "add" },
+    { "source": "high", "target": "macro.chaos", "amount": 0.5, "curve": "sqrt", "attack": 0.1, "release": 0.6, "mode": "add" },
+    { "source": "rms", "target": "macro.brightness", "amount": 0.4, "curve": "linear", "attack": 0.05, "release": 0.5, "mode": "add" },
+    { "source": "mid", "target": "param.moonGlow", "amount": 0.6, "curve": "smooth", "attack": 0.3, "release": 1.0, "mode": "add" },
+    { "source": "flux", "target": "param.flash", "amount": 0.6, "curve": "square", "attack": 0, "release": 0.2, "mode": "add" },
+    { "source": "centroid", "target": "macro.hue", "amount": 0.08, "curve": "linear", "attack": 2.0, "release": 2.0, "mode": "add" }
+  ]
+}
