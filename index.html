@@ -8,6 +8,7 @@
 </head>
 <body>
   <div id="stage"></div>
+  <div id="output-note" hidden>Visuals are showing in the projector window.<br /><span class="hint">Tick “Show preview here” to see them here too.</span></div>
 
   <!-- HUD: top-left -->
   <div id="hud">
@@ -48,6 +49,13 @@
       </label>
     </header>
     <div id="online-status" class="hint"></div>
+
+    <section id="output-section">
+      <h2>Output <span class="hint">projector / second screen</span></h2>
+      <button id="output-btn" class="accent wide" title="Open a window with only the visuals, for a projector or second screen">⧉ Open projector window</button>
+      <label class="check" id="output-preview-row" hidden><input type="checkbox" id="output-preview" checked /> Show preview here</label>
+      <div id="output-status" class="hint">Opens a window with only the visuals. Drag it to the projector and press F (or double-click) for fullscreen. Keep this window visible: it drives the show.</div>
+    </section>
 
     <section>
       <h2>Audio input</h2>

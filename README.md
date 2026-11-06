@@ -11,6 +11,8 @@ npm run dev        # http://127.0.0.1:5173
 
 Pick an input: Microphone / line-in, Audio file, or **Demo beat** (a built-in synth loop, handy for testing). Keys: **H** hides the panel, **F** toggles fullscreen, **Space** pauses.
 
+For VJing with a projector, click **⧉ Open projector window** (Output section). It opens a second window with only the visuals: drag it to the projector and press **F** or double-click it for fullscreen, and keep the controls on your main screen. Keep the main window visible, since it drives both (browsers slow down hidden windows). In Chrome/Edge, if you allow window management, the window moves to the other screen by itself. Untick **Show preview here** to save GPU time.
+
 **Live demo:** https://music-visualiser-theta.vercel.app. The hosted version is a static build (`npm run build`) with the built-in scenes and logics bundled in. It is read-only: creating scenes, saving logics and Claude generation need the local server, so run it locally for those. Redeploy with `vercel deploy --prod --scope sergey-fadeevs-projects`.
 
 ### Online mode (optional)

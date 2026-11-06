@@ -418,9 +418,68 @@ setInterval(() => {
     `${engine.field?.count.toLocaleString() ?? 0} particles · ${f.bpm ? f.bpm + ' bpm' : '— bpm'} · ${online ? 'online' : 'offline'}`;
 }, 1000 / 30);
 
+// ---------- Output (projector) window ----------
+const outputBtn = $<HTMLButtonElement>('#output-btn');
+const outputPreview = $<HTMLInputElement>('#output-preview');
+outputPreview.checked = store.get('outputPreview', '1') === '1';
+engine.renderer.preview = outputPreview.checked;
+function refreshOutput() {
+  const open = engine.renderer.outputOpen;
+  outputBtn.textContent = open ? '✕ Close projector window' : '⧉ Open projector window';
+  outputBtn.classList.toggle('accent', !open);
+  outputBtn.classList.toggle('active', open);
+  $('#output-preview-row').hidden = !open;
+  $('#output-note').hidden = !open || outputPreview.checked;
+  $('#stage').style.visibility = open && !outputPreview.checked ? 'hidden' : '';
+  $('#output-status').textContent = open
+    ? 'Projector window open. Drag it to the projector, then press F or double-click it for fullscreen (Esc exits). Keep this window visible: it drives the show.'
+    : 'Opens a window with only the visuals. Drag it to the projector and press F (or double-click) for fullscreen. Keep this window visible: it drives the show.';
+}
+engine.renderer.onOutputChange = refreshOutput;
+engine.renderer.onOutputKey = handleKey;
+outputPreview.onchange = () => {
+  engine.renderer.preview = outputPreview.checked;
+  store.set('outputPreview', outputPreview.checked ? '1' : '0');
+  refreshOutput();
+};
+
+/** Chrome/Edge: with the Window Management permission, move the output window onto another screen. */
+async function placeOnOtherScreen(win: Window) {
+  const w = window as unknown as { getScreenDetails?: () => Promise<{ screens: ScreenLike[]; currentScreen: ScreenLike }> };
+  type ScreenLike = { availLeft: number; availTop: number; availWidth: number; availHeight: number; isPrimary: boolean };
+  if (!w.getScreenDetails) return;
+  try {
+    const perm = await navigator.permissions.query({ name: 'window-management' as PermissionName }).catch(() => null);
+    if (perm?.state === 'denied') return;
+    const details = await w.getScreenDetails();
+    const cur = details.currentScreen;
+    const other = details.screens.find((s) => s.availLeft !== cur.availLeft || s.availTop !== cur.availTop);
+    if (!other || win.closed) return;
+    win.moveTo(other.availLeft, other.availTop);
+    win.resizeTo(other.availWidth, other.availHeight);
+  } catch { /* not supported or not allowed: the user drags it over */ }
+}
+
+outputBtn.onclick = () => {
+  if (engine.renderer.outputOpen) { engine.renderer.closeOutput(); return; }
+  let win: Window | null = null;
+  try {
+    win = engine.renderer.openOutput();
+  } catch (e) {
+    showToast(`Could not start the projector window: ${(e as Error).message}`, false);
+    return;
+  }
+  if (!win) {
+    showToast('The browser blocked the projector window. Allow pop-ups for this site, then click the button again.', false);
+    return;
+  }
+  placeOnOtherScreen(win);
+};
+refreshOutput();
+
 // ---------- Keys ----------
-window.addEventListener('keydown', (e) => {
-  if ((e.target as HTMLElement).closest?.('input, textarea, select')) return;
+// Also receives keys pressed in the projector window (except F, its own fullscreen).
+function handleKey(e: KeyboardEvent) {
   if (e.key === 'h' || e.key === 'H') {
     const hidden = $('#panel').classList.toggle('hidden');
     $('#hud').classList.toggle('hidden', hidden);
@@ -434,6 +493,10 @@ window.addEventListener('keydown', (e) => {
     skipFile((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 30 : 5));
     e.preventDefault();
   }
+}
+window.addEventListener('keydown', (e) => {
+  if ((e.target as HTMLElement).closest?.('input, textarea, select')) return;
+  handleKey(e);
 });
 
 // ---------- Drag & drop 3D models ----------

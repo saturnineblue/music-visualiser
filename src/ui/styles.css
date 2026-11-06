@@ -112,3 +112,10 @@ body.dropping::after {
 .transport-row button { width: 30px; padding: 3px 0; flex: none; }
 #seek { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
 #time { flex: none; font-variant-numeric: tabular-nums; }
+
+/* Output (projector) window controls */
+button.wide { width: 100%; padding: 9px 12px; font-size: 13px; }
+#output-section .check { margin-top: 8px; }
+#output-status { margin-top: 6px; }
+#output-note { position: fixed; top: 50%; left: calc((100vw - 330px) / 2); transform: translate(-50%, -50%);
+  text-align: center; color: var(--muted); font-size: 14px; line-height: 1.6; pointer-events: none; }
