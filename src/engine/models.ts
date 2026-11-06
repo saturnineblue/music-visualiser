@@ -35,10 +35,13 @@ export async function loadPointModel(id: string, url: string, count: number): Pr
   return model;
 }
 
-/** Part name for a mesh: its own name, minus Blender/glTF suffixes like ".001" or "_1". */
+/**
+ * Part name for a mesh: its own name, minus Blender/glTF suffixes. Blender copies are "rocks.001",
+ * which three.js's GLTFLoader turns into "rocks001" (it strips dots); multi-material meshes get "_1".
+ */
 function partName(o: THREE.Object3D): string {
   let n = o.name || o.parent?.name || 'part';
-  n = n.replace(/\.\d{3}$/, '').replace(/_\d+$/, '');
+  n = n.replace(/_\d+$/, '').replace(/\.?\d{3}$/, '');
   return n.toLowerCase() || 'part';
 }
 
