@@ -4,6 +4,7 @@ import { Controls } from './ui/controls';
 import { DEFAULT_MACROS, type LogicDefinition, type PointModel, type SceneDefinition } from './engine/types';
 import { loadPointModel, invalidateModel } from './engine/models';
 import { SetManager, entryMacros, type SetEntry } from './ui/sets';
+import { askText } from './ui/dialog';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const store = {
@@ -276,7 +277,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-start]').forEach((b) => (b.o
 
 // ---------- Scenes / logics ----------
 $('#new-scene').onclick = async () => {
-  const name = prompt('Name for the new scene:', 'My Scene');
+  const name = await askText('Name for the new scene:', 'My Scene', { ok: 'Create' });
   if (!name) return;
   const { id } = await api.newScene(name);
   await refreshLibrary();
@@ -286,7 +287,7 @@ $('#new-scene').onclick = async () => {
 $('#add-mapping').onclick = () => controls.addMapping();
 $('#save-logic').onclick = async () => {
   const cur = engine.logic.logic;
-  const name = prompt('Save logic as:', cur.name);
+  const name = await askText('Save logic as:', cur.name, { ok: 'Save' });
   if (!name) return;
   const logic: LogicDefinition = {
     ...cur,

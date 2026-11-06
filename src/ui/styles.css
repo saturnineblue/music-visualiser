@@ -133,3 +133,13 @@ button.wide { width: 100%; padding: 9px 12px; font-size: 13px; }
 .set-list li:hover .tools { display: flex; }
 .set-list .tools button { padding: 1px 5px; font-size: 11px; }
 .set-list li.missing .desc { color: var(--warn); }
+
+/* In-page dialogs (src/ui/dialog.ts) */
+.dialog-backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center;
+  background: rgba(2, 2, 8, 0.55); backdrop-filter: blur(3px); }
+.dialog { width: min(420px, calc(100vw - 32px)); padding: 18px; border-radius: 12px; background: #12131d;
+  border: 1px solid var(--line); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+.dialog .msg { white-space: pre-wrap; line-height: 1.5; }
+.dialog input { width: 100%; margin-top: 12px; }
+.dialog .row { justify-content: flex-end; margin-top: 16px; }
+button.danger { background: var(--err); color: #1a0606; }

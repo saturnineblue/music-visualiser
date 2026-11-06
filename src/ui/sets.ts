@@ -1,5 +1,6 @@
 import { DEFAULT_MACROS, MACRO_RANGES, type LogicDefinition, type Macros, type SceneDefinition } from '../engine/types';
 import { api, HOSTED, type LibraryItem } from './api';
+import { ask, askText } from './dialog';
 
 /**
  * Scene sets: an ordered list of entries (scene + logic + slider values) for a show, saved as one
@@ -169,21 +170,21 @@ export class SetManager {
   }
 
   /** True if it's fine to replace the current set (nothing unsaved, or the user agreed). */
-  private confirmDiscard(action: string) {
+  private async confirmDiscard(action: string, ok: string) {
     if (!this.dirty || !this.set.entries.length) return true;
-    return confirm(`"${this.set.name}" has unsaved changes (${this.set.entries.length} entries).\n\n` +
-      `${action} anyway? To keep them, cancel and use "Save set…" first.`);
+    return ask(`"${this.set.name}" has unsaved changes (${this.set.entries.length} entries).\n\n` +
+      `${action} anyway? To keep them, cancel and use "Save set…" first.`, { ok, danger: true });
   }
 
   /** Empty the set (entries, its bundled scenes and models) to start designing from scratch. */
-  clearSet() {
-    if (!this.confirmDiscard('Clear the set')) return;
+  async clearSet() {
+    if (!(await this.confirmDiscard('Clear the set', 'Clear set'))) return;
     this.load({ format: SET_FORMAT, version: 1, name: 'Untitled set', entries: [] }, new Map());
     this.hooks.changed('opened');
   }
 
-  private rename() {
-    const name = prompt('Set name:', this.set.name);
+  private async rename() {
+    const name = await askText('Set name:', this.set.name, { ok: 'Rename' });
     if (!name) return;
     this.set.name = name;
     this.edited();
@@ -194,7 +195,7 @@ export class SetManager {
   async openFile(file: File) {
     try {
       const set = parseSet(JSON.parse(await file.text()));
-      if (!this.confirmDiscard(`Open "${set.name}"`)) return;
+      if (!(await this.confirmDiscard(`Open "${set.name}"`, 'Open set'))) return;
       await this.openSet(set, true);
       this.hooks.toast(`Opened "${set.name}" (${set.entries.length} entries). Click an entry or press 1–9 to switch, Page Up/Down to step.`);
     } catch (e) {
@@ -206,16 +207,16 @@ export class SetManager {
    * Load a parsed set. Bundled scenes identical to the library's use the library (so edits hot-reload);
    * the others run from the set, after the user OKs running code from the file.
    */
-  async openSet(set: SetFile, ask: boolean) {
+  async openSet(set: SetFile, askFirst: boolean) {
     const runFromSet: string[] = [];
     const inLibrary = new Set(this.hooks.libraryScenes().map((s) => s.id));
     for (const [id, sc] of Object.entries(set.scenes ?? {})) {
       const lib = inLibrary.has(id) ? await api.sceneSource(id).catch(() => null) : null;
       if (lib !== sc.source) runFromSet.push(id);
     }
-    if (ask && runFromSet.length && !confirm(
+    if (askFirst && runFromSet.length && !(await ask(
       `This set contains code for ${runFromSet.length} scene(s) that will run in this page:\n\n${runFromSet.join(', ')}\n\n` +
-      'Only open sets you made yourself or got from someone you trust. Continue?')) throw new Error('Cancelled.');
+      'Only open sets you made yourself or got from someone you trust. Continue?', { ok: 'Run them' }))) throw new Error('Cancelled.');
 
     const defs = new Map<string, SceneDefinition>();
     for (const id of runFromSet) {
@@ -315,8 +316,8 @@ export class SetManager {
     try {
       let res = await api.installSet({ scenes, models, logics });
       if (res.conflicts.length) {
-        if (!confirm(`These already exist in your library with different content:\n\n${res.conflicts.join('\n')}\n\n` +
-          'Replace them with the set\'s versions? (The old files are kept in .history/.)')) {
+        if (!(await ask(`These already exist in your library with different content:\n\n${res.conflicts.join('\n')}\n\n` +
+          'Replace them with the set\'s versions? (The old files are kept in .history/.)', { ok: 'Replace', cancel: 'Only add new ones' }))) {
           // Install only what's new.
           const keep = (kind: string, id: string) => !res.conflicts.includes(`${kind} "${id}"`);
           res = await api.installSet({
@@ -363,14 +364,14 @@ export class SetManager {
       const logicName = typeof e.logic === 'string' ? e.logic : e.logic.name;
       const sceneName = this.bundledDefs.get(e.scene)?.name ?? this.hooks.libraryScenes().find((s) => s.id === e.scene)?.name ?? e.scene;
       li.querySelector('.desc')!.textContent = this.isMissing(e) ? `missing scene "${e.scene}"` : `${sceneName} · ${logicName}${this.bundledDefs.has(e.scene) ? ' · from set' : ''}`;
-      li.onclick = (ev) => {
+      li.onclick = async (ev) => {
         const a = (ev.target as HTMLElement).closest<HTMLButtonElement>('button')?.dataset.a;
         if (!a) return this.go(i);
         ev.stopPropagation();
         const E = this.set.entries;
         if (a === 'up' && i > 0) { [E[i - 1], E[i]] = [E[i], E[i - 1]]; if (this.active === i) this.active--; else if (this.active === i - 1) this.active++; }
         if (a === 'down' && i < E.length - 1) { [E[i + 1], E[i]] = [E[i], E[i + 1]]; if (this.active === i) this.active++; else if (this.active === i + 1) this.active--; }
-        if (a === 'rename') { const n = prompt('Entry name:', e.label); if (n) e.label = n; }
+        if (a === 'rename') { const n = await askText('Entry name:', e.label, { ok: 'Rename' }); if (!n) return; e.label = n; }
         if (a === 'del') { E.splice(i, 1); if (this.active === i) this.active = -1; else if (this.active > i) this.active--; }
         this.edited();
       };
