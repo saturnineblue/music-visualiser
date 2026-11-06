@@ -1,0 +1,15 @@
+{
+  "id": "punchy",
+  "name": "Punchy",
+  "description": "For electronic / percussive music: hard beat reactions, fast time on loud parts, flashes on onsets.",
+  "author": "built-in",
+  "base": { "intensity": 0.3, "chaos": 0.1, "speed": 0.8, "hue": 0.92, "hueSpread": 0.3, "brightness": 0.7, "size": 0.9, "morph": 0, "impulse": 0 },
+  "mappings": [
+    { "source": "beat", "target": "macro.impulse", "amount": 2.0, "curve": "linear", "attack": 0, "release": 0.12, "mode": "add" },
+    { "source": "bass", "target": "macro.intensity", "amount": 1.4, "curve": "exp", "attack": 0, "release": 0.12, "mode": "add" },
+    { "source": "flux", "target": "macro.brightness", "amount": 1.2, "curve": "square", "attack": 0, "release": 0.08, "mode": "add" },
+    { "source": "rms", "target": "macro.speed", "amount": 1.0, "curve": "linear", "attack": 0.1, "release": 0.6, "mode": "add" },
+    { "source": "high", "target": "macro.chaos", "amount": 1.0, "curve": "square", "attack": 0, "release": 0.2, "mode": "add" },
+    { "source": "pulse", "target": "macro.hue", "amount": 0.08, "curve": "linear", "attack": 0, "release": 0.3, "mode": "add" }
+  ]
+}

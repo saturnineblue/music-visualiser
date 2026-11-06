@@ -1,0 +1,15 @@
+{
+  "id": "balanced",
+  "name": "Balanced",
+  "description": "All-rounder: bass drives energy, beats punch, highs add chaos, brightness follows loudness, timbre shifts colour.",
+  "author": "built-in",
+  "base": { "intensity": 0.5, "chaos": 0.2, "speed": 1, "hue": 0.58, "hueSpread": 0.2, "brightness": 0.9, "size": 1, "morph": 0, "impulse": 0 },
+  "mappings": [
+    { "source": "bass", "target": "macro.intensity", "amount": 0.9, "curve": "square", "attack": 0, "release": 0.25, "mode": "add" },
+    { "source": "pulse", "target": "macro.impulse", "amount": 1.0, "curve": "linear", "attack": 0, "release": 0.1, "mode": "add" },
+    { "source": "high", "target": "macro.chaos", "amount": 0.6, "curve": "sqrt", "attack": 0.05, "release": 0.4, "mode": "add" },
+    { "source": "rms", "target": "macro.brightness", "amount": 0.6, "curve": "linear", "attack": 0.02, "release": 0.3, "mode": "add" },
+    { "source": "centroid", "target": "macro.hue", "amount": 0.25, "curve": "linear", "attack": 1.5, "release": 1.5, "mode": "add" },
+    { "source": "pulse", "target": "macro.size", "amount": 0.25, "curve": "linear", "attack": 0, "release": 0.15, "mode": "add" }
+  ]
+}

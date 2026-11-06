@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Music Visualiser</title>
+  <link rel="stylesheet" href="/src/ui/styles.css" />
+</head>
+<body>
+  <div id="stage"></div>
+
+  <!-- HUD: top-left -->
+  <div id="hud">
+    <canvas id="spectrum" width="256" height="48"></canvas>
+    <div id="hud-text"></div>
+  </div>
+
+  <!-- Error toast -->
+  <div id="toast" hidden>
+    <div id="toast-msg"></div>
+    <div class="row">
+      <button id="toast-fix" class="accent" hidden>Fix with Claude</button>
+      <button id="toast-close">Dismiss</button>
+    </div>
+  </div>
+
+  <!-- Start overlay (browsers need a click before audio can start) -->
+  <div id="start">
+    <div class="card">
+      <h1>Music Visualiser</h1>
+      <p>Choose an input to start. Everything runs locally.</p>
+      <div class="row">
+        <button data-start="mic" class="accent">Microphone / line-in</button>
+        <button data-start="file">Audio file…</button>
+        <button data-start="demo">Demo beat</button>
+      </div>
+      <p class="hint">H hides the panel · F fullscreen · Space pauses</p>
+    </div>
+  </div>
+
+  <aside id="panel">
+    <header>
+      <div class="title">Visualiser</div>
+      <label class="switch" title="Online mode lets you generate scenes and logics with Claude. Offline makes no network requests.">
+        <input type="checkbox" id="online-toggle" />
+        <span class="slider"></span>
+        <span id="online-label">Offline</span>
+      </label>
+    </header>
+    <div id="online-status" class="hint"></div>
+
+    <section>
+      <h2>Audio input</h2>
+      <div class="row">
+        <button data-input="mic">Mic</button>
+        <button data-input="file">File</button>
+        <button data-input="demo">Demo</button>
+        <button data-input="stop">Stop</button>
+      </div>
+      <select id="device"></select>
+      <label class="field">Gain <input type="range" id="gain" min="0.1" max="8" step="0.1" value="1" /></label>
+      <label class="field">Beat sensitivity <input type="range" id="beat-sens" min="1.05" max="2.5" step="0.05" value="1.35" /></label>
+      <label class="check"><input type="checkbox" id="monitor" checked /> Play file/demo through speakers</label>
+      <input type="file" id="file-input" accept="audio/*" hidden />
+    </section>
+
+    <section>
+      <h2>Scenes <span class="hint">what the particles form</span></h2>
+      <ul id="scene-list" class="list"></ul>
+      <div class="row">
+        <button id="new-scene">+ Blank scene</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Logics <span class="hint">how music drives it</span></h2>
+      <ul id="logic-list" class="list"></ul>
+      <div class="row">
+        <button id="add-mapping">+ Mapping</button>
+        <button id="save-logic">Save logic as…</button>
+      </div>
+    </section>
+
+    <section id="claude-section">
+      <h2>Ask Claude</h2>
+      <div id="claude-offline" class="hint">Switch to <b>Online</b> to create scenes and logics with Claude. Everything you've already made keeps working offline.</div>
+      <div id="claude-online" hidden>
+        <select id="claude-mode">
+          <option value="new-scene">New scene</option>
+          <option value="edit-scene">Change current scene</option>
+          <option value="new-logic">New logic</option>
+          <option value="edit-logic">Change current logic</option>
+        </select>
+        <select id="claude-model">
+          <option value="claude-opus-5-5">Opus 5.5 (best)</option>
+          <option value="claude-sonnet-5-5">Sonnet 5.5 (faster)</option>
+        </select>
+        <textarea id="claude-prompt" rows="4" placeholder="e.g. A flock of birds that scatters on every snare and regroups into a mountain range on the chorus"></textarea>
+        <label class="check"><input type="checkbox" id="claude-audio" checked /> Describe what's playing now to Claude</label>
+        <button id="claude-go" class="accent">Generate</button>
+        <div id="claude-log" class="log"></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Controls</h2>
+      <div id="gui"></div>
+    </section>
+  </aside>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

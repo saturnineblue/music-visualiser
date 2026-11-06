@@ -1,0 +1,14 @@
+{
+  "id": "ambient",
+  "name": "Ambient",
+  "description": "Slow and smooth: loudness swells the form, mids drift the colour, beats barely register.",
+  "author": "built-in",
+  "base": { "intensity": 0.6, "chaos": 0.35, "speed": 0.6, "hue": 0.62, "hueSpread": 0.25, "brightness": 0.8, "size": 1.1, "morph": 0, "impulse": 0 },
+  "mappings": [
+    { "source": "rms", "target": "macro.intensity", "amount": 0.8, "curve": "smooth", "attack": 0.8, "release": 2.0, "mode": "add" },
+    { "source": "mid", "target": "macro.hue", "amount": 0.2, "curve": "linear", "attack": 3.0, "release": 3.0, "mode": "add" },
+    { "source": "high", "target": "macro.chaos", "amount": 0.5, "curve": "linear", "attack": 1.0, "release": 2.0, "mode": "add" },
+    { "source": "pulse", "target": "macro.impulse", "amount": 0.3, "curve": "linear", "attack": 0.05, "release": 0.5, "mode": "add" },
+    { "source": "rms", "target": "macro.brightness", "amount": 0.5, "curve": "sqrt", "attack": 0.5, "release": 1.5, "mode": "add" }
+  ]
+}
