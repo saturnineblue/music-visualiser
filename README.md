@@ -15,7 +15,13 @@ For VJing with a projector, click **⧉ Open projector window** (Output section)
 
 **Scene sets** (Set section) are cue lists for a show. Add the current scene, logic and slider values with **+ Add current**, switch with a click, **1–9** or **Page Up / Page Down**, and **Save set…** to download one self-contained `.set.json`. It includes the scenes' code and models, so it also plays on the hosted site. **Open set…**, or drop the file on the window, to load one. Format and how to have Claude build a set: [docs/SETS.md](docs/SETS.md). Example: `sets/demo-night.set.json`.
 
-**Live demo:** https://music-visualiser-theta.vercel.app. The hosted version is a static build (`npm run build`) with the built-in scenes and logics bundled in. It is read-only: creating scenes, saving logics and Claude generation need the local server, so run it locally for those. Redeploy with `vercel deploy --prod --scope sergey-fadeevs-projects`.
+**Live site (password-protected):** https://music-visualiser-theta.vercel.app. The hosted version is a static build (`npm run build`) with the built-in scenes and logics bundled in. It is read-only: creating scenes, saving logics and Claude generation need the local server, so run it locally for those. Redeploy with `vercel deploy --prod --scope sergey-fadeevs-projects`.
+
+**Password:** the hosted site is private. [`middleware.ts`](middleware.ts) (Vercel Routing Middleware) shows a sign-in page and refuses every page, script and model until the right password is entered. A correct sign-in lasts 30 days on that browser; `/__logout` signs out. The password is the `SITE_PASSWORD` environment variable in Vercel. Set or change it with the command below (it asks for the value), then redeploy. Changing it signs everyone out. Without it the site stays locked rather than open. Local `npm run dev` isn't affected.
+
+```bash
+vercel env add SITE_PASSWORD production --sensitive --force --scope sergey-fadeevs-projects
+```
 
 ### Online mode (optional)
 

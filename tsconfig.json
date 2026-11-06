@@ -11,5 +11,5 @@
     "isolatedModules": true,
     "types": ["vite/client", "node"]
   },
-  "include": ["src", "scenes", "server", "vite.config.ts"]
+  "include": ["src", "scenes", "server", "vite.config.ts", "middleware.ts"]
 }
