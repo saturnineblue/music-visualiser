@@ -127,6 +127,7 @@ export class AudioEngine {
     }
     if (this.fileEl.src) URL.revokeObjectURL(this.fileEl.src);
     this.fileEl.src = URL.createObjectURL(file);
+    this.fileName = file.name;
     const src = this.fileSrc!;
     src.connect(this.inputGain);
     if (this.monitor) src.connect(this.monitorGain);
@@ -149,6 +150,33 @@ export class AudioEngine {
   setMonitor(on: boolean) {
     this.monitor = on;
     if (this.monitorGain) this.monitorGain.gain.value = on ? 1 : 0;
+  }
+
+  /** Name of the loaded audio file (empty when none). */
+  fileName = '';
+
+  /** Playback position of the file, in seconds (0 when no file). */
+  get fileTime() { return this.fileEl?.currentTime ?? 0; }
+  /** Length of the file in seconds (0 until its metadata loads). */
+  get fileDuration() {
+    const d = this.fileEl?.duration ?? 0;
+    return Number.isFinite(d) ? d : 0;
+  }
+  get filePaused() { return this.fileEl?.paused ?? true; }
+
+  /** Jump to a position in the file (clamped to its length). */
+  seekFile(seconds: number) {
+    if (this.kind !== 'file' || !this.fileEl) return;
+    const d = this.fileDuration;
+    this.fileEl.currentTime = Math.max(0, d ? Math.min(d - 0.05, seconds) : seconds);
+  }
+
+  /** Play or pause the file. Returns true when it is now playing. */
+  async toggleFilePlay(): Promise<boolean> {
+    if (this.kind !== 'file' || !this.fileEl) return false;
+    if (this.fileEl.paused) { await this.fileEl.play(); return true; }
+    this.fileEl.pause();
+    return false;
   }
 
   stop() {

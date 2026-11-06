@@ -166,7 +166,42 @@ fileInput.onchange = async () => {
 function markInput() {
   document.querySelectorAll<HTMLButtonElement>('[data-input]').forEach((b) =>
     b.classList.toggle('active', b.dataset.input === audio.kind));
+  refreshTransport();
 }
+
+// File transport: seek bar, play/pause, mouse wheel and arrow-key skipping.
+const seek = $<HTMLInputElement>('#seek');
+const playPause = $<HTMLButtonElement>('#play-pause');
+let seeking = false;
+const fmtTime = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+function refreshTransport() {
+  const isFile = audio.kind === 'file';
+  $('#transport').hidden = !isFile;
+  if (!isFile) return;
+  const d = audio.fileDuration, t = audio.fileTime;
+  $('#track-name').textContent = audio.fileName;
+  $('#track-name').title = audio.fileName;
+  seek.max = String(d || 1);
+  if (!seeking) seek.value = String(t);
+  $('#time').textContent = `${fmtTime(seeking ? +seek.value : t)} / ${fmtTime(d)}`;
+  playPause.textContent = audio.filePaused ? '▶' : '⏸';
+}
+function skipFile(by: number) {
+  audio.seekFile(audio.fileTime + by);
+  refreshTransport();
+}
+seek.oninput = () => { seeking = true; audio.seekFile(+seek.value); refreshTransport(); };
+seek.onchange = () => { seeking = false; refreshTransport(); };
+seek.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+  skipFile(Math.sign(delta) * (e.shiftKey ? 30 : 5));
+}, { passive: false });
+playPause.onclick = async () => {
+  try { await audio.toggleFilePlay(); } catch (e) { showToast(`Could not play file: ${(e as Error).message}`, false); }
+  refreshTransport();
+};
+setInterval(refreshTransport, 250);
 document.querySelectorAll<HTMLButtonElement>('[data-input]').forEach((b) => (b.onclick = () => startInput(b.dataset.input!)));
 
 async function fillDevices() {
@@ -395,6 +430,10 @@ window.addEventListener('keydown', (e) => {
     if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen();
   }
   if (e.key === ' ') { engine.paused = !engine.paused; e.preventDefault(); }
+  if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && audio.kind === 'file') {
+    skipFile((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 30 : 5));
+    e.preventDefault();
+  }
 });
 
 // ---------- Drag & drop 3D models ----------

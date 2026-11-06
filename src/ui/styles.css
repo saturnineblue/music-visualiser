@@ -104,3 +104,11 @@ body.dropping::after {
   border: 2px dashed var(--ok); border-radius: 12px;
   background: rgba(10, 12, 20, 0.6); color: #fff; font-size: 18px;
 }
+
+/* File transport (seek bar) */
+#transport { margin-top: 8px; }
+.track-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.transport-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.transport-row button { width: 30px; padding: 3px 0; flex: none; }
+#seek { flex: 1; min-width: 0; accent-color: var(--accent); cursor: pointer; }
+#time { flex: none; font-variant-numeric: tabular-nums; }
