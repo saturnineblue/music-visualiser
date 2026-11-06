@@ -121,4 +121,14 @@ export const formations: FormationHelpers = {
       out[i * 3 + 2] = Math.sin(a) * r;
     }
   },
+
+  model(out, count, model, scale = 15, offset = [0, 0, 0]) {
+    const src = model.positions, m = model.count;
+    for (let i = 0; i < count; i++) {
+      const j = (count === m ? i : Math.floor((i * m) / count)) * 3;
+      out[i * 3] = src[j] * scale + offset[0];
+      out[i * 3 + 1] = src[j + 1] * scale + offset[1];
+      out[i * 3 + 2] = src[j + 2] * scale + offset[2];
+    }
+  },
 };

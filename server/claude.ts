@@ -57,7 +57,11 @@ export interface GenerateRequest {
 
 export async function generate(
   req: GenerateRequest,
-  ctx: { apiKey: string; defaultModel: string; apiDoc: string; exampleScene: string; exampleLogic: string },
+  ctx: {
+    apiKey: string; defaultModel: string; apiDoc: string; exampleScene: string; exampleLogic: string;
+    /** 3D models in models/, with their part names. */
+    models?: { id: string; parts: string[] }[];
+  },
 ) {
   const client = new Anthropic({ apiKey: ctx.apiKey });
   const isScene = req.mode.endsWith('scene');
@@ -102,6 +106,13 @@ export async function generate(
   }
   if (!isScene && req.sceneParams?.length) {
     parts.push(`The current scene exposes these params you may target as "param.<name>": ${req.sceneParams.join(', ')}. Prefer macro.* targets so the logic works with any scene.`);
+  }
+  if (isScene && ctx.models?.length) {
+    parts.push(
+      'These 3D models are available (declare them in the scene\'s `models` array, then use ctx.models[id]; see "Models" in the API reference). ' +
+      'Use one only if it fits the request:\n' +
+      ctx.models.map((m) => `- ${m.id}${m.parts.length ? ` (parts: ${m.parts.join(', ')})` : ''}`).join('\n'),
+    );
   }
   if (req.audioSnapshot) parts.push(`What the input currently sounds like (feature averages over the last seconds): ${req.audioSnapshot}`);
   parts.push(isScene

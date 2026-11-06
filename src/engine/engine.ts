@@ -2,7 +2,7 @@ import { Renderer } from './renderer';
 import { ParticleField } from './particles';
 import { AudioEngine } from '../audio/audioEngine';
 import { LogicEngine } from '../logic/logicEngine';
-import type { LogicDefinition, SceneDefinition } from './types';
+import type { LogicDefinition, PointModel, SceneDefinition } from './types';
 
 const DEFAULT_COUNT = 60000;
 const MAX_COUNT = 300000;
@@ -28,6 +28,7 @@ export class Engine {
   paused = false;
 
   private lastGood: SceneDefinition | null = null;
+  private lastGoodModels: Record<string, PointModel> = {};
   private time = 0;
   private frame = 0;
   private last = performance.now();
@@ -42,11 +43,20 @@ export class Engine {
     this.events.onLogicChanged?.(logic);
   }
 
-  /** Returns true if the scene loaded; false if setup threw (previous scene is kept). */
-  setScene(def: SceneDefinition): boolean {
+  /** Particle count a scene will get (models are sampled to this). */
+  static particleCount(def: SceneDefinition) {
+    return Math.min(MAX_COUNT, Math.max(100, Math.floor(def.particleCount ?? DEFAULT_COUNT)));
+  }
+
+  /**
+   * Returns true if the scene loaded; false if setup threw (previous scene is kept).
+   * `models` are the scene's pre-loaded models (see SceneDefinition.models).
+   */
+  setScene(def: SceneDefinition, models: Record<string, PointModel> = {}): boolean {
     const prev = this.scene;
     const prevField = this.field;
-    const count = Math.min(MAX_COUNT, Math.max(100, Math.floor(def.particleCount ?? DEFAULT_COUNT)));
+    const count = Engine.particleCount(def);
+    const prevModels = prevField?.ctx.models;
 
     let field = prevField;
     if (!field || field.count !== count) {
@@ -68,6 +78,7 @@ export class Engine {
 
     // Reset per-scene state.
     field.ctx.state = {};
+    (field.ctx as { models: Record<string, PointModel> }).models = models;
     field.ctx.velocities.fill(0);
     field.ctx.sizes.fill(1);
     field.ctx.alphas.fill(1);
@@ -84,6 +95,7 @@ export class Engine {
       this.events.onSceneError?.(def.id, e as Error, 'setup');
       if (field !== prevField) field.dispose();
       if (prev && prevField) {
+        (prevField.ctx as { models: Record<string, PointModel> }).models = prevModels ?? {};
         this.logic.setSceneParams(prev.params);
         try { prev.setup?.(prevField.ctx); } catch { /* ignore */ }
       }
@@ -122,11 +134,11 @@ export class Engine {
         scene.update(field.ctx);
       } catch (e) {
         this.events.onSceneError?.(scene.id, e as Error, 'update');
-        if (this.lastGood && this.lastGood !== scene) this.setScene(this.lastGood);
+        if (this.lastGood && this.lastGood !== scene) this.setScene(this.lastGood, this.lastGoodModels);
         else this.scene = null;
         return;
       }
-      if (this.frame > 30 && this.lastGood !== scene) this.lastGood = scene;
+      if (this.frame > 30 && this.lastGood !== scene) { this.lastGood = scene; this.lastGoodModels = field.ctx.models; }
       const m = this.logic.macros;
       field.upload(m.size, m.brightness);
     }

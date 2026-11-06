@@ -130,6 +130,7 @@ export class ParticleField {
       audio, macros, params,
       time: 0, dt: 0, sdt: 0, frame: 0,
       state: {},
+      models: {},
       helpers,
       integrate(opts?: IntegrateOptions) { self.integrate(opts); },
       colorize(hueOffset, saturation = 0.75, lightness = 0.55) {

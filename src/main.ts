@@ -1,7 +1,8 @@
 import { Engine } from './engine/engine';
 import { api, HOSTED, type Library } from './ui/api';
 import { Controls } from './ui/controls';
-import { DEFAULT_MACROS, type LogicDefinition } from './engine/types';
+import { DEFAULT_MACROS, type LogicDefinition, type PointModel, type SceneDefinition } from './engine/types';
+import { loadPointModel, invalidateModel } from './engine/models';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const store = {
@@ -21,7 +22,7 @@ const engine = new Engine($('#stage'), {
 });
 const controls = new Controls($('#gui'), engine);
 
-let library: Library = { scenes: [], logics: [] };
+let library: Library = { scenes: [], logics: [], models: [] };
 let currentLogicId = store.get('logic', '');
 
 async function refreshLibrary() {
@@ -42,6 +43,10 @@ function renderLists() {
     li.onclick = () => loadScene(s.id);
     sceneList.appendChild(li);
   }
+  const modelList = $('#model-list');
+  modelList.textContent = library.models.length
+    ? library.models.map((m) => m.parts.length ? `${m.id} (${m.parts.join(', ')})` : m.id).join(' · ')
+    : 'none yet';
   const logicList = $('#logic-list');
   logicList.innerHTML = '';
   for (const l of library.logics) {
@@ -56,10 +61,24 @@ function renderLists() {
   }
 }
 
+// Bumped when a model file changes, so its URL (and cache entry) changes too.
+const modelVersions: Record<string, number> = {};
+
+async function loadModels(def: SceneDefinition): Promise<Record<string, PointModel>> {
+  const count = Engine.particleCount(def);
+  const out: Record<string, PointModel> = {};
+  await Promise.all((def.models ?? []).map(async (mid) => {
+    if (!library.models.some((m) => m.id === mid)) throw new Error(`Model "${mid}" not found. Put ${mid}.glb in models/.`);
+    out[mid] = await loadPointModel(mid, api.modelUrl(mid, modelVersions[mid] ?? 0), count);
+  }));
+  return out;
+}
+
 async function loadScene(id: string): Promise<boolean> {
   try {
     const def = await api.loadScene(id);
-    const ok = engine.setScene(def);
+    const models = await loadModels(def);
+    const ok = engine.setScene(def, models);
     if (ok) {
       store.set('scene', id);
       if (!currentLogicId && def.defaultLogic) await loadLogic(def.defaultLogic);
@@ -94,6 +113,11 @@ if (import.meta.hot) {
     await refreshLibrary();
     if (kind === 'scene' && engine.scene?.id === id) loadScene(id);
     if (kind === 'logic' && currentLogicId === id) loadLogic(id);
+    if (kind === 'model') {
+      invalidateModel(id);
+      modelVersions[id] = (modelVersions[id] ?? 0) + 1;
+      if (engine.scene?.models?.includes(id)) loadScene(engine.scene.id);
+    }
   });
 }
 
@@ -330,7 +354,7 @@ setInterval(() => {
 
 // ---------- Keys ----------
 window.addEventListener('keydown', (e) => {
-  if ((e.target as HTMLElement).closest('input, textarea, select')) return;
+  if ((e.target as HTMLElement).closest?.('input, textarea, select')) return;
   if (e.key === 'h' || e.key === 'H') {
     const hidden = $('#panel').classList.toggle('hidden');
     $('#hud').classList.toggle('hidden', hidden);
@@ -342,9 +366,38 @@ window.addEventListener('keydown', (e) => {
   if (e.key === ' ') { engine.paused = !engine.paused; e.preventDefault(); }
 });
 
+// ---------- Drag & drop 3D models ----------
+window.addEventListener('dragover', (e) => {
+  if (e.dataTransfer?.types.includes('Files')) { e.preventDefault(); document.body.classList.add('dropping'); }
+});
+window.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dropping'); });
+window.addEventListener('drop', async (e) => {
+  document.body.classList.remove('dropping');
+  const files = [...(e.dataTransfer?.files ?? [])];
+  if (!files.length) return;
+  e.preventDefault();
+  for (const file of files) {
+    if (!/\.glb$/i.test(file.name)) {
+      showToast(`"${file.name}" isn't a .glb model. In Blender: File → Export → glTF 2.0, format "glTF Binary (.glb)".`, false);
+      continue;
+    }
+    try {
+      const { id, replaced } = await api.uploadModel(file);
+      await refreshLibrary();
+      showToast(
+        `${replaced ? 'Updated' : 'Added'} model "${id}" (models/${id}.glb).\n\n` +
+        `Use it in a scene with  models: ['${id}']  and  ctx.models['${id}'], or ask Claude for a scene that uses it.`,
+        false,
+      );
+    } catch (err) {
+      showToast(`Could not import "${file.name}": ${(err as Error).message}`, false);
+    }
+  }
+});
+
 // ---------- Boot ----------
 if (HOSTED) {
-  for (const sel of ['.switch', '#claude-section', '#new-scene', '#save-logic']) ($(sel) as HTMLElement).hidden = true;
+  for (const sel of ['.switch', '#claude-section', '#new-scene', '#save-logic', '#model-drop-hint']) ($(sel) as HTMLElement).hidden = true;
 }
 engine.renderer.setInsetRight($('#panel').offsetWidth);
 (async () => {

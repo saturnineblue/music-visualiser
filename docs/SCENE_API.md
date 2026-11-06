@@ -5,6 +5,7 @@ This file is the authoring guide for humans **and** the reference sent to Claude
 ## Concepts
 
 - **Scene** (`scenes/<id>.ts`): decides *what* the particles form and how they move. Examples: a landscape, an object, an abstract structure.
+- **Model** (`models/<id>.glb`): a 3D object (e.g. a house from Blender) that scenes can turn into particles. See [Models](#models).
 - **Logic** (`logics/<id>.json`): decides *how the music drives* the scene. It maps audio features to **macros** (shared by all scenes) and **params** (specific to one scene).
 - Any logic can be combined with any scene. Scenes should therefore read `ctx.macros` for their main behaviour, and expose extra knobs as `params`.
 
@@ -26,6 +27,7 @@ const scene: SceneDefinition = {
   camera: { position: [0, 8, 50], target: [0, 0, 0], autoRotate: 0.4, fov: 60 },
   bloom: 0.9,                  // glow strength 0..3
   defaultLogic: 'balanced',    // optional
+  models: ['house'],           // optional: models/<id>.glb to load before setup → ctx.models.house
   params: {
     radius: { value: 12, min: 2, max: 30, label: 'Radius' },
   },
@@ -69,6 +71,7 @@ Flat typed arrays; particle `i` uses `[i*3, i*3+1, i*3+2]` in xyz/rgb arrays and
 | `sdt` | number | `dt * macros.speed` |
 | `frame` | number | frames since scene start |
 | `state` | object | free storage for the scene |
+| `models` | Record<string, PointModel> | the models listed in the scene's `models`, by id (see [Models](#models)) |
 | `helpers` | SceneHelpers | see below |
 | `integrate(opts?)` | fn | spring-to-target + flow field + damping, then moves positions |
 | `colorize(hueOffset?, s?, l?)` | fn | colours all particles from `macros.hue`/`hueSpread`; `hueOffset(i)` returns −0.5..0.5 (default random per particle) |
@@ -106,6 +109,34 @@ You may also skip `integrate()` and write `positions` directly (e.g. for rigid, 
   - `sphere(out, n, radius, surface?)`, `cube(out, n, size, surface?)`, `torus(out, n, R, r)`, `torusKnot(out, n, scale, p?, q?, tube?)`
   - `grid(out, n, width, depth, heightFn?)` — XZ grid, row-major; `heightFn(x, z)` → y. Great for landscapes.
   - `galaxy(out, n, radius, arms?, twist?)`, `helix(out, n, radius, height, turns?, strands?)`, `lorenz(out, n, scale)`, `ring(out, n, radius, thickness?)`
+  - `model(out, n, model, scale = 15, offset = [0, 0, 0])` — the points of a loaded model (see below).
+
+## Models
+
+3D objects (houses, trees, people, scanned objects…) live in `models/<id>.glb` (glTF binary). Add one by dropping a `.glb` onto the app window, copying it into `models/`, or exporting from Blender (File → Export → glTF 2.0, format "glTF Binary"). Phone scans (Polycam, Scaniverse) and libraries like Poly Haven export `.glb` too.
+
+A scene lists the models it needs; they're loaded and sampled before `setup`:
+
+```ts
+models: ['house'],
+setup(ctx) {
+  ctx.helpers.formations.model(ctx.targets, ctx.count, ctx.models.house, 13);
+},
+```
+
+`ctx.models[id]` is a **PointModel**: the model's surface sampled into exactly `ctx.count` points, so point `i` of the model can drive particle `i`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `count` | number | number of points (= `ctx.count`) |
+| `positions` | Float32Array (count×3) | surface points, centred on the origin, largest half-extent = 1 (multiply by ~10–18) |
+| `normals` | Float32Array (count×3) | unit surface normal per point (push particles outward, e.g. on beats) |
+| `colors` | Float32Array (count×3) | rgb 0..1 from the model's materials/textures (scale by ~0.5 for additive blending) |
+| `parts` | Uint8Array (count) | part index per point, into `partNames` |
+| `partNames` | string[] | lower-case object names from the file, e.g. `["walls", "roof", "windows", "door"]` |
+| `size` | [x, y, z] | normalised bounding-box size (largest = 2) |
+
+Parts are what make objects musical: animate each one differently (`if (m.parts[i] === roofIndex) …`). Get an index with `m.partNames.indexOf('roof')` in `setup` (−1 if the model has no such part) and keep it in `ctx.state`. Points are shuffled, so any subset is spread evenly over the surface. The same points come back every load, so effects stay stable.
 
 ## Logic file format (`logics/<id>.json`)
 

@@ -116,6 +116,29 @@ export interface IntegrateOptions {
   maxSpeed?: number;
 }
 
+/**
+ * A 3D model (from models/<id>.glb) sampled into points over its surface.
+ * Positions are normalised: centred on the origin, largest half-extent = 1
+ * (so multiply by ~10–18 to fill the view). Points are shuffled, so any subset is spread evenly.
+ */
+export interface PointModel {
+  readonly id: string;
+  /** Number of sampled points (equals the scene's particle count). */
+  readonly count: number;
+  /** xyz per point, normalised to -1..1 on the largest axis. */
+  readonly positions: Float32Array;
+  /** Surface normal per point (unit length). Handy for pushing particles outward. */
+  readonly normals: Float32Array;
+  /** rgb 0..1 per point from the model's materials / textures. */
+  readonly colors: Float32Array;
+  /** Part index per point; see partNames. */
+  readonly parts: Uint8Array;
+  /** Lower-case mesh/object names from the file, e.g. ["walls", "roof", "windows", "door"]. */
+  readonly partNames: string[];
+  /** Normalised bounding-box size [x, y, z] (largest = 2). */
+  readonly size: [number, number, number];
+}
+
 export interface FormationHelpers {
   /** Points uniformly inside / on a sphere. */
   sphere(out: Float32Array, count: number, radius: number, surface?: boolean): void;
@@ -135,6 +158,8 @@ export interface FormationHelpers {
   lorenz(out: Float32Array, count: number, scale: number): void;
   /** Flat ring in XZ plane. */
   ring(out: Float32Array, count: number, radius: number, thickness?: number): void;
+  /** Points of a loaded model (see SceneDefinition.models), scaled and offset. */
+  model(out: Float32Array, count: number, model: PointModel, scale?: number, offset?: [number, number, number]): void;
 }
 
 export interface SceneHelpers {
@@ -190,6 +215,9 @@ export interface SceneContext {
   /** Free storage for the scene (survives between frames). */
   state: Record<string, any>;
 
+  /** Models the scene asked for in `models`, by id, sampled to `count` points. */
+  readonly models: Record<string, PointModel>;
+
   helpers: SceneHelpers;
 
   /** Default physics: spring to targets + flow field + damping, then advances positions. */
@@ -216,6 +244,8 @@ export interface SceneDefinition {
   params?: Record<string, ParamSpec>;
   /** Logic id to load with this scene if the user hasn't chosen one. */
   defaultLogic?: string;
+  /** Model ids from models/<id>.glb to load before setup; available as ctx.models[id]. */
+  models?: string[];
   setup?(ctx: SceneContext): void;
   update(ctx: SceneContext): void;
   dispose?(ctx: SceneContext): void;

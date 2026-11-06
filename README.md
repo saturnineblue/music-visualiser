@@ -26,6 +26,7 @@ Restart `npm run dev`, then flip the **Online** switch. While Offline, the app m
 ```
 scenes/*.ts        WHAT the particles form   (one file per scene, hot-reloaded)
 logics/*.json      HOW the music drives it   (audio feature → macro/param mappings)
+models/*.glb       3D objects scenes can turn into particles (named parts react separately)
 docs/SCENE_API.md  The authoring guide, also sent to Claude as its reference
 docs/scene-template.ts  Starting point for "+ Blank scene"
 
@@ -46,11 +47,12 @@ Each frame: `audio → features → logic → macros/params → scene.update(ctx
 
 - **In the app:** `+ Blank scene` creates `scenes/<name>.ts` from the template. `+ Mapping` and `Save logic as…` let you build logics by hand.
 - **With Claude in the app (Online):** choose New scene, Change current scene, New logic, or Change current logic, then describe what you want. You can also send Claude a summary of what's playing.
+- **3D objects:** drop a `.glb` onto the app (or export one from Blender into `models/`). Name the parts in Blender (`roof`, `windows`…) and scenes can animate each one separately. See *Dream House* and the Models section of `docs/SCENE_API.md`.
 - **With Claude Code / any editor:** edit files in `scenes/` or `logics/`. The running app hot-reloads them without restarting the audio.
 
 ## Next steps
 
 - GPU compute (Three.js WebGPU/TSL) for 500k–1M+ particles
 - An MCP server inside the app (live audio features, set params, screenshot) so Claude can tune scenes while watching them
-- Mesh/image/text sampling for object formations (GLTF via `MeshSurfaceSampler`)
+- Image/text sampling for formations, and point-cloud / Gaussian-splat `.ply` import
 - Scene playlists and transitions driven by song sections

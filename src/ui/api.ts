@@ -13,7 +13,8 @@ export const HOSTED = !import.meta.env.DEV;
 const sceneModules = import.meta.glob<{ default: SceneDefinition }>('/scenes/*.ts');
 const sceneSources = import.meta.glob<string>('/scenes/*.ts', { query: '?raw', import: 'default' });
 const logicModules = import.meta.glob<LogicDefinition>('/logics/*.json', { import: 'default' });
-const fileId = (path: string) => path.replace(/^.*\/|\.(ts|json)$/g, '');
+const modelUrls = import.meta.glob<string>('/models/*.glb', { eager: true, query: '?url', import: 'default' });
+const fileId = (path: string) => path.replace(/^.*\/|\.(ts|json|glb)$/g, '');
 
 function grab(src: string, key: string) {
   const m = src.match(new RegExp(`${key}\\s*:\\s*(['"\`])((?:\\\\.|(?!\\1).)*)\\1`));
@@ -36,13 +37,15 @@ async function staticLibrary(): Promise<Library> {
       return { id: fileId(p), name: j.name ?? fileId(p), description: j.description ?? '', author: j.author ?? '' };
     }),
   );
-  return { scenes, logics };
+  const models = Object.keys(modelUrls).map((p) => ({ id: fileId(p), parts: [] }));
+  return { scenes, logics, models };
 }
 
 const notHosted = () => Promise.reject(new Error('Not available in the hosted version. Run the app locally (npm run dev) for this.'));
 
 export interface LibraryItem { id: string; name: string; description: string; author: string }
-export interface Library { scenes: LibraryItem[]; logics: LibraryItem[] }
+export interface ModelItem { id: string; parts: string[] }
+export interface Library { scenes: LibraryItem[]; logics: LibraryItem[]; models: ModelItem[] }
 
 async function json<T>(r: Response): Promise<T> {
   const body = await r.json().catch(() => ({}));
@@ -68,6 +71,20 @@ export const api = {
     def.id = id;
     return def;
   },
+
+  /** URL of models/<id>.glb. `version` busts the cache after the file changes (dev). */
+  modelUrl(id: string, version = 0): string {
+    if (HOSTED) {
+      const url = modelUrls[`/models/${id}.glb`];
+      if (!url) throw new Error(`Unknown model "${id}"`);
+      return url;
+    }
+    return `/models/${id}.glb?v=${version}`;
+  },
+
+  uploadModel: (file: File) => HOSTED ? notHosted() :
+    fetch(`/api/models?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file })
+      .then((r) => json<{ id: string; replaced: boolean }>(r)),
 
   newScene: (name: string) => HOSTED ? notHosted() :
     fetch('/api/scenes/new', { method: 'POST', body: JSON.stringify({ name }) }).then((r) => json<{ id: string }>(r)),

@@ -14,6 +14,7 @@ import { generate, type GenerateRequest } from './claude';
  *   POST /api/scenes/new          → { id, name } copy the template into scenes/
  *   GET  /api/logics/:id          → logic JSON
  *   POST /api/logics              → save logic JSON
+ *   POST /api/models?name=x.glb   → save an uploaded .glb into models/ (raw body)
  *   POST /api/claude              → generate a scene/logic with Claude and save it
  *
  * Changes in scenes/ and logics/ are pushed to the browser as `vis:library` HMR events
@@ -23,7 +24,9 @@ import { generate, type GenerateRequest } from './claude';
 const ROOT = process.cwd();
 const SCENES = path.join(ROOT, 'scenes');
 const LOGICS = path.join(ROOT, 'logics');
+const MODELS = path.join(ROOT, 'models');
 const DOCS = path.join(ROOT, 'docs');
+const MAX_MODEL_BYTES = 100 * 1024 * 1024;
 
 const safeId = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'untitled';
@@ -43,6 +46,36 @@ function send(res: ServerResponse, status: number, body: unknown, type = 'applic
   res.statusCode = status;
   res.setHeader('Content-Type', type);
   res.end(type === 'application/json' ? JSON.stringify(body) : String(body));
+}
+
+function readRaw(req: IncomingMessage, limit: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > limit) { reject(new Error(`File too large (max ${limit / 1024 / 1024} MB)`)); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+/** Mesh-bearing node names in a .glb (its JSON chunk), i.e. the parts a scene can animate. */
+function glbParts(file: string): string[] {
+  try {
+    const b = fs.readFileSync(file);
+    if (b.toString('ascii', 0, 4) !== 'glTF') return [];
+    const len = b.readUInt32LE(12);
+    const j = JSON.parse(b.toString('utf8', 20, 20 + len));
+    const names = (j.nodes ?? []).filter((n: { mesh?: number }) => n.mesh !== undefined)
+      .map((n: { name?: string; mesh: number }) => (n.name || j.meshes?.[n.mesh]?.name || 'part')
+        .replace(/\.\d{3}$/, '').replace(/_\d+$/, '').toLowerCase());
+    return [...new Set<string>(names)];
+  } catch {
+    return [];
+  }
 }
 
 function backup(dir: string, file: string) {
@@ -83,7 +116,20 @@ function library() {
         return { id: f.replace(/\.json$/, ''), name: f + ' (invalid JSON)', description: '', author: '' };
       }
     });
-  return { scenes, logics };
+  const models = fs.existsSync(MODELS)
+    ? fs.readdirSync(MODELS).filter((f) => f.endsWith('.glb'))
+      .map((f) => ({ id: f.replace(/\.glb$/, ''), parts: glbParts(path.join(MODELS, f)) }))
+    : [];
+  return { scenes, logics, models };
+}
+
+/** Which library a changed file belongs to (history backups and other files: none). */
+function libraryKind(file: string): 'scene' | 'logic' | 'model' | null {
+  if (file.includes(`${path.sep}.history${path.sep}`)) return null;
+  if (file.startsWith(SCENES + path.sep) && file.endsWith('.ts')) return 'scene';
+  if (file.startsWith(LOGICS + path.sep) && file.endsWith('.json')) return 'logic';
+  if (file.startsWith(MODELS + path.sep) && file.endsWith('.glb')) return 'model';
+  return null;
 }
 
 export function visualiserApi(env: Record<string, string>): Plugin {
@@ -93,13 +139,14 @@ export function visualiserApi(env: Record<string, string>): Plugin {
   return {
     name: 'visualiser-api',
     configureServer(server: ViteDevServer) {
-      server.watcher.add([SCENES, LOGICS]);
+      fs.mkdirSync(MODELS, { recursive: true });
+      server.watcher.add([SCENES, LOGICS, MODELS]);
       // New / deleted library files (handleHotUpdate only sees changes).
       const onAddRemove = (file: string) => {
         if (file.includes(`${path.sep}.history${path.sep}`)) return;
-        if (!file.startsWith(SCENES + path.sep) && !file.startsWith(LOGICS + path.sep)) return;
-        const kind = file.startsWith(SCENES) ? 'scene' : 'logic';
-        const id = path.basename(file).replace(/\.(ts|json)$/, '');
+        const kind = libraryKind(file);
+        if (!kind) return;
+        const id = path.basename(file).replace(/\.(ts|json|glb)$/, '');
         server.ws.send({ type: 'custom', event: 'vis:library', data: { kind, id } });
       };
       server.watcher.on('add', onAddRemove);
@@ -142,6 +189,19 @@ export function visualiserApi(env: Record<string, string>): Plugin {
             return send(res, 200, { id });
           }
 
+          if (p === '/api/models' && req.method === 'POST') {
+            const name = url.searchParams.get('name') ?? 'model.glb';
+            if (!/\.glb$/i.test(name)) return send(res, 400, { error: 'Only .glb files are supported (in Blender: File → Export → glTF 2.0, format "glTF Binary").' });
+            const data = await readRaw(req, MAX_MODEL_BYTES);
+            if (data.toString('ascii', 0, 4) !== 'glTF') return send(res, 400, { error: 'Not a valid .glb file.' });
+            const id = safeId(name.replace(/\.glb$/i, ''));
+            const file = path.join(MODELS, id + '.glb');
+            const replaced = fs.existsSync(file);
+            if (replaced) backup(MODELS, id + '.glb');
+            fs.writeFileSync(file, data);
+            return send(res, 200, { id, replaced });
+          }
+
           m = p.match(/^\/api\/logics\/([a-z0-9-]+)$/);
           if (m && req.method === 'GET') {
             const f = path.join(LOGICS, m[1] + '.json');
@@ -168,7 +228,7 @@ export function visualiserApi(env: Record<string, string>): Plugin {
             const exampleScene = fs.readFileSync(path.join(SCENES, 'morphing-forms.ts'), 'utf8');
             const exampleLogic = fs.readFileSync(path.join(LOGICS, 'balanced.json'), 'utf8');
 
-            const out = await generate(body, { apiKey, defaultModel, apiDoc, exampleScene, exampleLogic });
+            const out = await generate(body, { apiKey, defaultModel, apiDoc, exampleScene, exampleLogic, models: library().models });
 
             if (out.kind === 'scene') {
               const editing = body.mode !== 'new-scene' && body.sceneId;
@@ -199,10 +259,11 @@ export function visualiserApi(env: Record<string, string>): Plugin {
 
     // Library files: notify the app instead of reloading the page (keeps audio running).
     handleHotUpdate({ file, server }) {
-      if (file.startsWith(SCENES + path.sep) || file.startsWith(LOGICS + path.sep)) {
-        if (file.includes(`${path.sep}.history${path.sep}`)) return [];
-        const kind = file.startsWith(SCENES) ? 'scene' : 'logic';
-        const id = path.basename(file).replace(/\.(ts|json)$/, '');
+      const kind = libraryKind(file);
+      const inLibrary = [SCENES, LOGICS, MODELS].some((d) => file.startsWith(d + path.sep));
+      if (kind || inLibrary) {
+        if (!kind) return [];
+        const id = path.basename(file).replace(/\.(ts|json|glb)$/, '');
         server.ws.send({ type: 'custom', event: 'vis:library', data: { kind, id } });
         return [];
       }

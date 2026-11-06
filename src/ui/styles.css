@@ -93,3 +93,12 @@ h2 .hint { text-transform: none; letter-spacing: 0; margin-left: 6px; }
 #gui .lil-gui.root { width: 100%; }
 
 [hidden] { display: none !important; }
+
+.hint.models { margin-top: 8px; }
+body.dropping::after {
+  content: 'Drop a .glb model to add it to models/';
+  position: fixed; inset: 12px; z-index: 50; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px dashed var(--ok); border-radius: 12px;
+  background: rgba(10, 12, 20, 0.6); color: #fff; font-size: 18px;
+}
