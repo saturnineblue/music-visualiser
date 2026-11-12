@@ -25,12 +25,19 @@ const vertexShader = /* glsl */ `
 
 const fragmentShader = /* glsl */ `
   uniform float uBrightness;
+  uniform float uSolid;
   varying vec3 vColor;
   varying float vAlpha;
   void main() {
     vec2 c = gl_PointCoord - 0.5;
     float d = length(c);
     if (d > 0.5) discard;
+    if (uSolid > 0.5) {
+      // Solid dots: opaque discs that cover what is behind them (for light backgrounds and dark colours).
+      if (d > 0.4 || vAlpha < 0.05) discard;
+      gl_FragColor = vec4(vColor * uBrightness, 1.0);
+      return;
+    }
     float a = smoothstep(0.5, 0.0, d);
     a *= a;
     gl_FragColor = vec4(vColor * uBrightness, a * vAlpha * 0.7);
@@ -94,6 +101,7 @@ export class ParticleField {
         uSize: { value: 1 },
         uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
         uBrightness: { value: 1 },
+        uSolid: { value: 0 },
       },
       transparent: true,
       depthWrite: false,
@@ -146,6 +154,7 @@ export class ParticleField {
       setCamera: (spec) => hooks.setCamera(spec),
       setBackground: (r, g, b) => hooks.setBackground(r, g, b),
       setBloom: (v) => hooks.setBloom(v),
+      setParticleStyle: (style) => self.setStyle(style),
     };
   }
 
@@ -192,6 +201,20 @@ export class ParticleField {
     (g.attributes.alpha as THREE.BufferAttribute).needsUpdate = true;
     this.material.uniforms.uSize.value = sizeMul;
     this.material.uniforms.uBrightness.value = brightness;
+  }
+
+  /**
+   * glow: particles add light to what is behind them (the default; needs a dark background).
+   * solid: opaque dots that hide what is behind them, so dark colours show on light backgrounds.
+   */
+  setStyle(style: 'glow' | 'solid') {
+    const solid = style === 'solid', m = this.material;
+    if ((m.uniforms.uSolid.value > 0.5) === solid) return;
+    m.uniforms.uSolid.value = solid ? 1 : 0;
+    m.blending = solid ? THREE.NormalBlending : THREE.AdditiveBlending;
+    m.transparent = !solid;
+    m.depthWrite = solid;
+    m.needsUpdate = true;
   }
 
   dispose() {

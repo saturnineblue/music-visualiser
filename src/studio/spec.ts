@@ -122,6 +122,11 @@ export interface StudioSpec {
     color: string;
     /** Bloom glow strength, 0..3. */
     glow: number;
+    /**
+     * How particles are drawn. glow: they add light (needs a dark space). solid: opaque dots that show
+     * on a light space. auto: solid when the space colour is light.
+     */
+    particles: 'auto' | 'glow' | 'solid';
   };
   camera: {
     distance: number;
@@ -235,7 +240,7 @@ export function newSpec(name = 'Studio scene'): StudioSpec {
   return {
     format: STUDIO_FORMAT, version: 1, id: slug(name), name, description: '',
     particleCount: 60000,
-    space: { color: '#020308', glow: 0.8 },
+    space: { color: '#020308', glow: 0.8, particles: 'auto' },
     camera: { distance: 47, azimuth: 0, elevation: 10, fov: 60, autoRotate: 0.4, autoTilt: 0, target: [0, 0, 0] },
     light: { enabled: true, color: '#fff2dd', intensity: 1, azimuth: 35, elevation: 40, ambient: 0.45, fill: '#3050ff', fillIntensity: 0.25 },
     motion: { spring: 6, damping: 3, turbulence: 0.6, burst: 2 },
@@ -323,7 +328,10 @@ export function normalizeSpec(raw: unknown): StudioSpec {
     id: slug(typeof s.id === 'string' && s.id ? s.id : name), name,
     description: typeof s.description === 'string' ? s.description : '',
     particleCount: Math.round(num(s.particleCount, d.particleCount, 1000, 300000)),
-    space: { color: hex(s.space?.color, d.space.color), glow: num(s.space?.glow, d.space.glow, 0, 3) },
+    space: {
+      color: hex(s.space?.color, d.space.color), glow: num(s.space?.glow, d.space.glow, 0, 3),
+      particles: ['glow', 'solid'].includes(s.space?.particles as string) ? s.space!.particles : 'auto',
+    },
     camera: cleanCamera(s.camera, d.camera),
     light: {
       enabled: s.light?.enabled !== false,

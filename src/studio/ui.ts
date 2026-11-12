@@ -665,7 +665,10 @@ export class Studio {
       this.loopBlock(),
       this.details('space', 'Space and camera', false,
         this.color('Space colour', s.space, 'color', 'live'),
-        this.slider('Glow', s.space, 'glow', 0, 3, 0.05, 'live', 'Bloom around bright particles'),
+        this.select('Particles', s.space, 'particles', [
+          ['auto', 'Automatic'], ['glow', 'Glowing (adds light, for dark space)'], ['solid', 'Solid dots (for light space)'],
+        ], 'live', false),
+        this.slider('Glow', s.space, 'glow', 0, 3, 0.05, 'live', 'Bloom around bright particles. Not used with solid dots.'),
         el('div', { class: 'hint st-note' }, 'Camera: drag the view to turn it, scroll to zoom, right-drag to slide. These settings follow what you see.'),
         cam('Distance', 'distance', 5, 150, 0.5),
         cam('Angle around', 'azimuth', -180, 180, 1, 'Where the camera stands around the scene: 0 is in front, 90 is from the right'),

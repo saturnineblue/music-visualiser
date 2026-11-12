@@ -240,6 +240,11 @@ export interface SceneContext {
   setBackground(r: number, g: number, b: number): void;
   /** Bloom glow strength, 0..3 (overrides the scene's `bloom`). */
   setBloom(strength: number): void;
+  /**
+   * How particles are drawn. "glow" (the default) adds their light to the background, so it needs a
+   * dark one. "solid" draws opaque dots, so dark colours show on a light background.
+   */
+  setParticleStyle(style: 'glow' | 'solid'): void;
 }
 
 export interface SceneDefinition {

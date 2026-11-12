@@ -79,6 +79,7 @@ export class Engine {
 
     // Reset per-scene state.
     field.ctx.state = {};
+    field.setStyle('glow');
     (field.ctx as { models: Record<string, PointModel> }).models = models;
     field.ctx.velocities.fill(0);
     field.ctx.sizes.fill(1);

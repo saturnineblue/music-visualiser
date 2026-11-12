@@ -47,7 +47,7 @@ export interface StudioState {
   env: number[];
   delta: Record<string, number>;
   stage: number; t: number; timer: number; moving: boolean;
-  bg: string; glow: number;
+  bg: string; glow: number; style: string;
   loopT: number;
   /** The automatic morph position (stage + progress), so a loop recording can capture it. */
   morphS: number; maxForms: number;
@@ -265,7 +265,7 @@ export function studioSetup(ctx: SceneContext, spec: StudioSpec) {
   for (let i = 0; i < ctx.count; i++) { r1[i] = ctx.helpers.rand(i, 11); r2[i] = ctx.helpers.rand(i, 23); }
   const st: StudioState = {
     rev: undefined, sig: '', layers: [], used: 0, env: [], delta: {},
-    stage: 0, t: 0, timer: 0, moving: false, bg: '', glow: -1, loopT: 0, morphS: 0, maxForms: 1, r1, r2,
+    stage: 0, t: 0, timer: 0, moving: false, bg: '', glow: -1, style: '', loopT: 0, morphS: 0, maxForms: 1, r1, r2,
   };
   ctx.state.studio = st;
   ctx.alphas.fill(1);
@@ -314,7 +314,15 @@ export function studioUpdate(ctx: SceneContext, spec: StudioSpec) {
 
   // Space. (The camera is set when the scene starts and then belongs to the view: the studio keeps the spec in step with it.)
   if (st.bg !== spec.space.color) { st.bg = spec.space.color; const c = hexRgb(st.bg, tmpA); ctx.setBackground(c[0], c[1], c[2]); }
-  const glow = Math.max(0, spec.space.glow + D('space.glow'));
+  // Glowing particles only add light, so they vanish against a light space: draw solid dots there.
+  const bgc = hexRgb(spec.space.color, tmpA);
+  const style = spec.space.particles === 'auto'
+    ? (0.2126 * bgc[0] + 0.7152 * bgc[1] + 0.0722 * bgc[2] > 0.3 ? 'solid' : 'glow')
+    : spec.space.particles;
+  if (st.style !== style) { st.style = style; ctx.setParticleStyle(style); }
+  const solid = style === 'solid';
+  // Bloom smears a light background over dark dots: keep it off in solid mode.
+  const glow = solid ? 0 : Math.max(0, spec.space.glow + D('space.glow'));
   if (Math.abs(glow - st.glow) > 0.005) { st.glow = glow; ctx.setBloom(glow); }
 
   // Light.
@@ -362,6 +370,8 @@ export function studioUpdate(ctx: SceneContext, spec: StudioSpec) {
   }
 
   const react = 0.4 + macros.intensity;
+  // Colours are dimmed (BASE) so glowing particles don't blow out; solid dots show them as picked.
+  const unBase = solid ? 1 / BASE : 1;
   const gBright = Math.max(0, spec.brightness + D('brightness'));
   const burst = audio.beat ? spec.motion.burst * (0.5 + macros.impulse) : 0;
   const burstSalt = ctx.frame & 7;
@@ -439,7 +449,7 @@ export function studioUpdate(ctx: SceneContext, spec: StudioSpec) {
         cr = hue[0] * r + hue[1] * g + hue[2] * bl; cg = hue[3] * r + hue[4] * g + hue[5] * bl; cb = hue[6] * r + hue[7] * g + hue[8] * bl;
         if (cr < 0) cr = 0; if (cg < 0) cg = 0; if (cb < 0) cb = 0;
       }
-      const br = bright * (1 + v * sGlow + cGlow);
+      const br = bright * (1 + v * sGlow + cGlow) * unBase;
       colors[j] = cr * br; colors[j + 1] = cg * br; colors[j + 2] = cb * br;
       sizes[gi] = size * (1 + v * sp.size) * (0.7 + r2[gi] * 0.6);
       alphas[gi] = 1;

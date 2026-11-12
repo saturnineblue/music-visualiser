@@ -51,7 +51,7 @@ The spec (`StudioSpec` in [`src/studio/spec.ts`](../src/studio/spec.ts), which i
   "format": "music-visualiser-studio", "version": 1,
   "id": "my-scene", "name": "My Scene", "description": "",
   "particleCount": 60000,
-  "space": { "color": "#020308", "glow": 0.8 },
+  "space": { "color": "#020308", "glow": 0.8, "particles": "auto" },   // particles: auto | glow | solid
   "camera": { "distance": 47, "azimuth": 0, "elevation": 10, "fov": 60,   // angles in degrees
               "autoRotate": 0.4, "autoTilt": 0, "target": [0, 0, 0] },
   "light": { "enabled": true, "color": "#fff2dd", "intensity": 1, "azimuth": 35, "elevation": 40,
@@ -97,6 +97,7 @@ Notes:
 - **Sources**: `{ "kind": "feature", "name": … }` with a name from the logic sources (`rms`, `bass`, `lowMid`, `mid`, `high`, `centroid`, `flux`, `pulse`, `beat`, `constant`), or `{ "kind": "band", "lo": Hz, "hi": Hz }` (30 Hz to 16 kHz is analysed).
 - **Spectrum** `axis`: `none`, one of the axes, or `part` (one band per part of the model).
 - **Mapping targets**: `brightness`, `hueShift`, `morph.position`, `motion.turbulence`, `motion.spring`, `space.glow`, `light.intensity`, `light.ambient`, `light.azimuth`, `light.elevation`, and per layer `layer:<id>.scale`, `.lift`, `.spin`, `.size`, `.brightness`, `.explode`, `.spectrum.push`, `.spectrum.glow`. A mapping adds `curve(source) × amount` to its target, smoothed by `attack` and `release` (seconds).
+- **Particles** (`space.particles`): `glow` adds each particle's light to the space behind it, so it needs a dark space colour and black shows nothing. `solid` draws opaque dots, so dark colours show on a light space; bloom is off in this mode. `auto` picks `solid` when the space colour is light.
 - **Camera**: `azimuth` 0 looks from the front (+z), 90 from the right; `elevation` is degrees above the horizon. `autoTilt` swings the camera between ±60°. A spec with the older `height` field is converted.
 - **Loop tracks**: `path` is a key of `liveValues(spec)`: any numeric, colour or on/off setting, written as its place in the spec with layers addressed by id (`space.glow`, `light.azimuth`, `layer:<id>.scale`, `layer:<id>.forms.0.color.a`, `mappings.0.amount`). `t` is seconds (ascending, within `duration`) and `v` the values: numbers are interpolated, colours and switches change at their time. The special path `@morph` records the automatic morph position. While a loop plays, it overwrites those settings every frame.
 - Layer `id`s are letters and digits only, and unique within the spec.
