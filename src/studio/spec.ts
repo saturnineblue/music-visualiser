@@ -73,6 +73,33 @@ export interface StudioForm {
   parts: Record<string, StudioPart>;
 }
 
+/**
+ * The space colour moving with the music.
+ *  - colors:   a chosen metric picks a place along a row of colours (quiet = the first, loud = the last).
+ *  - random:   each time the metric rises past a threshold, the space fades to a new random colour.
+ *  - gradient: the space travels round a loop of colours at `speed`; the metric pushes it further along.
+ */
+export interface StudioBackgroundChange {
+  mode: 'off' | 'colors' | 'random' | 'gradient';
+  /** The metric: an audio feature or a frequency range. */
+  source: StudioSource;
+  /** The colours to move between (2 to 6). */
+  colors: string[];
+  /** Gradient: trips round the colours per minute. */
+  speed: number;
+  /** How strongly the metric acts, 0..1. For random colours: how easily it triggers a change. */
+  amount: number;
+  /** Seconds the colour takes to follow (0 = instantly). */
+  smooth: number;
+  /** Random colours: how light they are, 0 (black) to 1 (white). */
+  lightness: number;
+}
+
+export const newBackgroundChange = (): StudioBackgroundChange => ({
+  mode: 'off', source: { kind: 'feature', name: 'bass' }, colors: ['#020308', '#1b2a6b', '#6b1b5a'],
+  speed: 6, amount: 1, smooth: 0.4, lightness: 0.12,
+});
+
 export interface StudioSpectrum {
   /** How the spectrum is laid over the layer: low frequencies at one end, high at the other. */
   axis: 'none' | Axis | 'part';
@@ -128,6 +155,8 @@ export interface StudioSpec {
      * on a light space. auto: solid when the space colour is light.
      */
     particles: 'auto' | 'glow' | 'solid';
+    /** How the space colour changes with the music. */
+    change: StudioBackgroundChange;
   };
   camera: {
     distance: number;
@@ -244,7 +273,7 @@ export function newSpec(name = 'Studio scene'): StudioSpec {
   return {
     format: STUDIO_FORMAT, version: 1, id: slug(name), name, description: '',
     particleCount: 60000,
-    space: { color: '#020308', glow: 0.8, particles: 'auto' },
+    space: { color: '#020308', glow: 0.8, particles: 'auto', change: newBackgroundChange() },
     camera: { distance: 47, azimuth: 0, elevation: 10, fov: 60, autoRotate: 0.4, autoTilt: 0, target: [0, 0, 0] },
     light: { enabled: true, color: '#fff2dd', intensity: 1, azimuth: 35, elevation: 40, ambient: 0.45, fill: '#3050ff', fillIntensity: 0.25 },
     motion: { spring: 6, damping: 3, turbulence: 0.6, burst: 2 },
@@ -341,6 +370,7 @@ export function normalizeSpec(raw: unknown): StudioSpec {
     space: {
       color: hex(s.space?.color, d.space.color), glow: num(s.space?.glow, d.space.glow, 0, 3),
       particles: ['glow', 'solid'].includes(s.space?.particles as string) ? s.space!.particles : 'auto',
+      change: cleanChange((s.space as any)?.change),
     },
     camera: cleanCamera(s.camera, d.camera),
     light: {
@@ -405,6 +435,18 @@ export function makeRoom(spec: StudioSpec, want: number): number {
   const k = Math.max(0, spec.particleCount - want) / Math.max(1, used);
   for (const L of visible) L.count = Math.max(MIN_OBJECT_PARTICLES, Math.floor((L.count * k) / 100) * 100);
   return want;
+}
+
+function cleanChange(c: any): StudioBackgroundChange {
+  const d = newBackgroundChange();
+  const colors = (Array.isArray(c?.colors) ? c.colors : []).filter((x: unknown) => typeof x === 'string' && /^#[0-9a-f]{6}$/i.test(x)).slice(0, 6);
+  return {
+    mode: ['colors', 'random', 'gradient'].includes(c?.mode) ? c.mode : 'off',
+    source: c?.source ? cleanSource(c.source) : d.source,
+    colors: colors.length >= 2 ? colors : d.colors,
+    speed: num(c?.speed, d.speed, 0, 120), amount: num(c?.amount, d.amount, 0, 1),
+    smooth: num(c?.smooth, d.smooth, 0, 10), lightness: num(c?.lightness, d.lightness, 0, 1),
+  };
 }
 
 function cleanCamera(c: any, d: StudioSpec['camera']): StudioSpec['camera'] {
@@ -538,6 +580,7 @@ export function studioTargets(spec: StudioSpec): StudioTarget[] {
     { key: 'motion.turbulence', label: 'Turbulence', group: 'Whole scene', min: -8, max: 8 },
     { key: 'motion.spring', label: 'Tightness', group: 'Whole scene', min: -20, max: 20 },
     { key: 'space.glow', label: 'Glow', group: 'Space and light', min: -3, max: 3 },
+    { key: 'space.change.speed', label: 'Background gradient speed', group: 'Space and light', min: -60, max: 60 },
     { key: 'light.intensity', label: 'Light intensity', group: 'Space and light', min: -4, max: 4 },
     { key: 'light.ambient', label: 'Ambient light', group: 'Space and light', min: -2, max: 2 },
     { key: 'light.azimuth', label: 'Light direction', group: 'Space and light', min: -360, max: 360 },

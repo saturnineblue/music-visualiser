@@ -59,7 +59,11 @@ The spec (`StudioSpec` in [`src/studio/spec.ts`](../src/studio/spec.ts), which i
   "format": "music-visualiser-studio", "version": 1,
   "id": "my-scene", "name": "My Scene", "description": "",
   "particleCount": 60000,           // the particle budget; the scene uses the sum of its visible objects' counts
-  "space": { "color": "#020308", "glow": 0.8, "particles": "auto" },   // particles: auto | glow | solid
+  "space": { "color": "#020308", "glow": 0.8, "particles": "auto",     // particles: auto | glow | solid
+             "change": { "mode": "gradient",                           // off | colors | random | gradient
+                         "source": { "kind": "feature", "name": "bass" },
+                         "colors": ["#06103a", "#5a1466", "#0d5c63"],
+                         "speed": 6, "amount": 0.4, "smooth": 0.4, "lightness": 0.12 } },
   "camera": { "distance": 47, "azimuth": 0, "elevation": 10, "fov": 60,   // angles in degrees
               "autoRotate": 0.4, "autoTilt": 0, "target": [0, 0, 0] },
   "light": { "enabled": true, "color": "#fff2dd", "intensity": 1, "azimuth": 35, "elevation": 40,
@@ -106,6 +110,7 @@ Notes:
 - **Sources**: `{ "kind": "feature", "name": … }` with a name from the logic sources (`rms`, `bass`, `lowMid`, `mid`, `high`, `centroid`, `flux`, `pulse`, `beat`, `constant`), or `{ "kind": "band", "lo": Hz, "hi": Hz }` (30 Hz to 16 kHz is analysed).
 - **Spectrum** `axis`: `none`, one of the axes, or `part` (one band per part of the model).
 - **Mapping targets**: `brightness`, `hueShift`, `morph.position`, `motion.turbulence`, `motion.spring`, `space.glow`, `light.intensity`, `light.ambient`, `light.azimuth`, `light.elevation`, and per layer `layer:<id>.scale`, `.lift`, `.spin`, `.size`, `.brightness`, `.explode`, `.spectrum.push`, `.spectrum.glow`. A mapping adds `curve(source) × amount` to its target, smoothed by `attack` and `release` (seconds).
+- **Background changes** (`space.change`), set under Space and camera in the panel. `source` is the metric that drives it (an audio feature or a frequency range). `colors` mode: the metric picks a place along `colors`, the first when quiet and the last when loud; `amount` is how far along the loudest moments reach. `gradient` mode: the space travels round `colors` and back to the first, `speed` trips per minute, and the metric pushes it further along by `amount`; `space.change.speed` is also a mapping target. `random` mode: each time the metric rises past a threshold (`amount` is the sensitivity) the space fades to a new random colour of the given `lightness`, starting from `space.color`. `smooth` is the fall-back or fade time in seconds. The automatic particle style is judged on the colours' average lightness, so it does not flip while the colour moves.
 - **Particles** (`space.particles`): `glow` adds each particle's light to the space behind it, so it needs a dark space colour and black shows nothing. `solid` draws opaque dots, so dark colours show on a light space; bloom is off in this mode. `auto` picks `solid` when the space colour is light.
 - **Particles per object**: each layer has a `count`. The visible layers' counts add up to at most `particleCount` (the budget, set under Scene in the panel); the scene simulates and draws only that sum, so the budget caps the load and unused budget costs nothing. A spec with the older relative `share` field is converted.
 - **Camera**: `azimuth` 0 looks from the front (+z), 90 from the right; `elevation` is degrees above the horizon. `autoTilt` swings the camera between ±60°. A spec with the older `height` field is converted.

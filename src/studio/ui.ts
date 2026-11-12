@@ -914,6 +914,7 @@ export class Studio {
       el('h3', {}, 'Look ', el('span', { class: 'hint' }, 'space, camera and light')),
       this.details('space', 'Space and camera', false,
         this.color('Space colour', s.space, 'color', 'live'),
+        this.backgroundBlock(),
         this.select('Particles', s.space, 'particles', [
           ['auto', 'Automatic'], ['glow', 'Glowing (adds light, for dark space)'], ['solid', 'Solid dots (for light space)'],
         ], 'live', false),
@@ -946,6 +947,50 @@ export class Studio {
     if (this.root.parentElement) this.root.parentElement.scrollTop = scroll;
     this.renderTools();
     this.renderPopup();
+  }
+
+  /** How the space colour moves with the music: along chosen colours, to random ones, or round a gradient. */
+  private backgroundBlock() {
+    const ch = this.spec.space.change;
+    const labels: Record<string, string> = { off: 'off', colors: 'set colours', random: 'random colours', gradient: 'gradient' };
+    const palette = () => el('div', { class: 'st-colors' },
+      ...ch.colors.map((c, i) => {
+        const input = el('input', { type: 'color', value: c, title: `Colour ${i + 1}` });
+        input.oninput = () => { ch.colors[i] = input.value; this.changed('live'); };
+        return el('span', { class: 'st-swatch' }, input,
+          ch.colors.length > 2 ? el('button', { title: 'Remove this colour', onclick: () => { ch.colors.splice(i, 1); this.changed('live', true); } }, '✕') : null);
+      }),
+      ch.colors.length < 6 ? el('button', { title: 'Add a colour', onclick: () => { ch.colors.push(ch.colors[ch.colors.length - 1]); this.changed('live', true); } }, '+') : null);
+    const metric = () => el('label', { class: 'st-field' }, el('span', {}, 'Driven by'),
+      this.sourcePicker(() => ch.source, (src) => { if (src) ch.source = src; }, false));
+    const kids: (Node | null | false)[] = [
+      this.select('Colour', ch, 'mode', [
+        ['off', 'Stays the same'], ['colors', 'Follows a set of colours'], ['random', 'Jumps to random colours'], ['gradient', 'Travels through a gradient'],
+      ], 'live'),
+    ];
+    if (ch.mode === 'colors') {
+      kids.push(
+        el('div', { class: 'hint st-note' }, 'The sound picks a place along these colours: quiet shows the first, loud the last.'),
+        palette(), metric(),
+        this.slider('Reach', ch, 'amount', 0, 1, 0.01, 'live', 'How far along the colours the loudest moments go'),
+        this.slider('Fall back (s)', ch, 'smooth', 0, 5, 0.05, 'live', 'How slowly the colour returns after the sound drops'));
+    } else if (ch.mode === 'random') {
+      kids.push(
+        el('div', { class: 'hint st-note' }, 'Each time the sound rises past a threshold, the space fades to a new random colour. It starts from the space colour above.'),
+        metric(),
+        this.slider('Sensitivity', ch, 'amount', 0, 1, 0.01, 'live', 'Higher: quieter moments already trigger a new colour'),
+        this.slider('Fade (s)', ch, 'smooth', 0, 5, 0.05, 'live', 'How long each change takes'),
+        this.slider('Lightness', ch, 'lightness', 0, 1, 0.01, 'live', 'How light the random colours are: 0 is black, 1 is white'));
+    } else if (ch.mode === 'gradient') {
+      kids.push(
+        el('div', { class: 'hint st-note' }, 'The space travels round these colours and back to the first. The sound pushes it further along.'),
+        palette(),
+        this.slider('Speed', ch, 'speed', 0, 60, 0.5, 'live', 'Trips round the colours per minute. 0 stands still, so only the sound moves it. Mappings can drive this too.'),
+        metric(),
+        this.slider('Push', ch, 'amount', 0, 1, 0.01, 'live', 'How far the sound pushes the colour along the gradient'),
+        this.slider('Fall back (s)', ch, 'smooth', 0, 5, 0.05, 'live', 'How slowly the push relaxes after the sound drops'));
+    }
+    return this.details('bgchange', el('span', {}, 'Background changes', el('span', { class: 'hint' }, ` · ${labels[ch.mode]}`)), false, ...kids);
   }
 
   private addLayerRow() {

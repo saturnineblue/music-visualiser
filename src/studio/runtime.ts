@@ -48,6 +48,9 @@ export interface StudioState {
   delta: Record<string, number>;
   stage: number; t: number; timer: number; moving: boolean;
   bg: string; glow: number; style: string;
+  /** Background colour changes: smoothed metric, place in the gradient, and the random fade. */
+  bgLevel: number; bgPhase: number; bgWasHigh: boolean;
+  bgFrom: number[]; bgTo: number[]; bgNow: number[]; bgFade: number;
   loopT: number;
   /** Which loop is playing (-1 = none), and the settings as they were before it started. */
   loopIndex: number;
@@ -263,6 +266,75 @@ function sample(fd: FormData, i: number) {
 const tmpA: number[] = [], tmpB: number[] = [], tmpC: number[] = [];
 const hue = new Float32Array(9);
 
+const lum = (c: number[]) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+
+function hslRgb(h: number, s: number, l: number, out: number[]) {
+  const f = (n: number) => {
+    const k = (n + h * 12) % 12, a = s * Math.min(l, 1 - l);
+    return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+  };
+  out[0] = f(0); out[1] = f(8); out[2] = f(4);
+  return out;
+}
+
+const palette: number[][] = [];
+/** The colour at position p along a row of colours (0 = first, 1 = last; `loop` wraps back to the first). */
+function along(colors: string[], p: number, loop: boolean, out: number[]) {
+  const n = colors.length;
+  while (palette.length < n) palette.push([0, 0, 0]);
+  for (let i = 0; i < n; i++) hexRgb(colors[i], palette[i]);
+  const span = loop ? n : n - 1;
+  const x = loop ? (((p % 1) + 1) % 1) * span : Math.min(1, Math.max(0, p)) * span;
+  const i = Math.min(span - (loop ? 0 : 1), Math.floor(x)), f = x - i;
+  const a = palette[i % n], b = palette[(i + 1) % n];
+  out[0] = a[0] + (b[0] - a[0]) * f; out[1] = a[1] + (b[1] - a[1]) * f; out[2] = a[2] + (b[2] - a[2]) * f;
+  return out;
+}
+
+const bgOut: number[] = [0, 0, 0];
+/**
+ * Work out this frame's space colour and set it. Returns the background's typical lightness
+ * (what the automatic particle style is judged on).
+ */
+function backgroundColor(ctx: SceneContext, spec: StudioSpec, st: StudioState, speedDelta: number): number {
+  const ch = spec.space.change, dt = ctx.dt;
+  let typical: number;
+  if (ch.mode === 'off') {
+    hexRgb(spec.space.color, bgOut);
+    typical = lum(bgOut);
+  } else {
+    // The metric, smoothed: it rises at once and falls over `smooth` seconds.
+    const raw = Math.min(1, Math.max(0, sourceValue(ch.source, ctx.audio)));
+    st.bgLevel = raw > st.bgLevel || ch.smooth <= 0 ? raw : st.bgLevel + (raw - st.bgLevel) * (1 - Math.exp(-dt / ch.smooth));
+    if (ch.mode === 'colors') {
+      along(ch.colors, st.bgLevel * ch.amount, false, bgOut);
+    } else if (ch.mode === 'gradient') {
+      st.bgPhase = (st.bgPhase + (Math.max(0, ch.speed + speedDelta) / 60) * dt) % 1;
+      along(ch.colors, st.bgPhase + st.bgLevel * ch.amount * 0.5, true, bgOut);
+    } else {
+      // Random: a new colour each time the metric rises past the threshold, faded in.
+      const high = raw > 1 - ch.amount * 0.8;
+      if (st.bgNow[0] < 0) { hexRgb(spec.space.color, st.bgTo); st.bgFrom = [...st.bgTo]; st.bgFade = 1; }
+      if (high && !st.bgWasHigh) {
+        st.bgFrom = [...(st.bgNow[0] < 0 ? st.bgTo : st.bgNow)];
+        hslRgb(Math.random(), 0.7, ch.lightness, st.bgTo);
+        st.bgFade = 0;
+      }
+      st.bgWasHigh = high;
+      st.bgFade = ch.smooth <= 0 ? 1 : Math.min(1, st.bgFade + dt / ch.smooth);
+      for (let i = 0; i < 3; i++) bgOut[i] = st.bgFrom[i] + (st.bgTo[i] - st.bgFrom[i]) * st.bgFade;
+    }
+    // Typical lightness: the average of the chosen colours, or the random colours' lightness.
+    typical = ch.mode === 'random' ? ch.lightness
+      : ch.colors.reduce((a, c) => a + lum(hexRgb(c, tmpA)), 0) / ch.colors.length;
+  }
+  if (Math.abs(bgOut[0] - st.bgNow[0]) + Math.abs(bgOut[1] - st.bgNow[1]) + Math.abs(bgOut[2] - st.bgNow[2]) > 0.0005) {
+    ctx.setBackground(bgOut[0], bgOut[1], bgOut[2]);
+    st.bgNow[0] = bgOut[0]; st.bgNow[1] = bgOut[1]; st.bgNow[2] = bgOut[2];
+  }
+  return typical;
+}
+
 let loopCam = false;
 /** Write one looped setting, noting what else has to follow (a repaint, the camera). */
 function writeLooped(ctx: SceneContext, spec: StudioSpec, path: string, v: Leaf) {
@@ -290,7 +362,7 @@ export function studioSetup(ctx: SceneContext, spec: StudioSpec) {
   for (let i = 0; i < ctx.count; i++) { r1[i] = ctx.helpers.rand(i, 11); r2[i] = ctx.helpers.rand(i, 23); }
   const st: StudioState = {
     rev: undefined, sig: '', layers: [], used: 0, env: [], delta: {},
-    stage: 0, t: 0, timer: 0, moving: false, bg: '', glow: -1, style: '', loopT: 0, loopIndex: -1, loopBase: null, morphS: 0, maxForms: 1, r1, r2,
+    stage: 0, t: 0, timer: 0, moving: false, bg: '', glow: -1, style: '', bgLevel: 0, bgPhase: 0, bgWasHigh: false, bgFrom: [0, 0, 0], bgTo: [0, 0, 0], bgNow: [-1, 0, 0], bgFade: 1, loopT: 0, loopIndex: -1, loopBase: null, morphS: 0, maxForms: 1, r1, r2,
   };
   ctx.state.studio = st;
   ctx.alphas.fill(1);
@@ -346,12 +418,10 @@ export function studioUpdate(ctx: SceneContext, spec: StudioSpec) {
   const D = (k: string) => d[k] ?? 0;
 
   // Space. (The camera is set when the scene starts and then belongs to the view: the studio keeps the spec in step with it.)
-  if (st.bg !== spec.space.color) { st.bg = spec.space.color; const c = hexRgb(st.bg, tmpA); ctx.setBackground(c[0], c[1], c[2]); }
+  const bgLum = backgroundColor(ctx, spec, st, D('space.change.speed'));
   // Glowing particles only add light, so they vanish against a light space: draw solid dots there.
-  const bgc = hexRgb(spec.space.color, tmpA);
-  const style = spec.space.particles === 'auto'
-    ? (0.2126 * bgc[0] + 0.7152 * bgc[1] + 0.0722 * bgc[2] > 0.3 ? 'solid' : 'glow')
-    : spec.space.particles;
+  // (Judged on the background's typical lightness, so a changing colour doesn't flip the style.)
+  const style = spec.space.particles === 'auto' ? (bgLum > 0.3 ? 'solid' : 'glow') : spec.space.particles;
   if (st.style !== style) { st.style = style; ctx.setParticleStyle(style); }
   const solid = style === 'solid';
   // Bloom smears a light background over dark dots: keep it off in solid mode.
