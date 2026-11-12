@@ -1,6 +1,6 @@
 import type { AudioFeatures, Curve, PointModel, SceneContext, SceneDefinition } from '../engine/types';
 import { formations } from '../engine/formations';
-import { cameraPosition, setLive, specModels, trackValue, type Axis, type StudioForm, type StudioLayer, type StudioSource, type StudioSpec } from './spec';
+import { cameraPosition, liveValues, loopParam, setLive, specModels, trackValue, type Leaf, type Axis, type StudioForm, type StudioLayer, type StudioSource, type StudioSpec } from './spec';
 
 /**
  * Plays a StudioSpec (see spec.ts): the engine behind every scene made in the Scene Studio.
@@ -49,6 +49,9 @@ export interface StudioState {
   stage: number; t: number; timer: number; moving: boolean;
   bg: string; glow: number; style: string;
   loopT: number;
+  /** Which loop is playing (-1 = none), and the settings as they were before it started. */
+  loopIndex: number;
+  loopBase: Map<string, Leaf> | null;
   /** The automatic morph position (stage + progress), so a loop recording can capture it. */
   morphS: number; maxForms: number;
   r1: Float32Array; r2: Float32Array;
@@ -260,12 +263,34 @@ function sample(fd: FormData, i: number) {
 const tmpA: number[] = [], tmpB: number[] = [], tmpC: number[] = [];
 const hue = new Float32Array(9);
 
+let loopCam = false;
+/** Write one looped setting, noting what else has to follow (a repaint, the camera). */
+function writeLooped(ctx: SceneContext, spec: StudioSpec, path: string, v: Leaf) {
+  const changed = setLive(spec, path, v);
+  if (path.startsWith('camera.')) loopCam = true;
+  // Colours and part reactions are baked per particle: repaint when one changes.
+  else if (changed && (typeof v !== 'number' || path.includes('.parts.')) && path.startsWith('layer:')) spec.rev = (spec.rev ?? 0) + 1;
+}
+
+/**
+ * Stop the playing loop's hold on the spec: settings it changed go back to what they were before it
+ * started. The runtime calls this when the loop changes; the studio calls it before restarting a scene.
+ */
+export function settleLoop(ctx: SceneContext, spec: StudioSpec) {
+  const st = ctx.state.studio as StudioState | undefined;
+  if (!st?.loopBase) return;
+  for (const [path, v] of st.loopBase) writeLooped(ctx, spec, path, v);
+  st.loopBase = null;
+  st.loopIndex = -1;
+  if (loopCam) { loopCam = false; ctx.setCamera({ position: cameraPosition(spec.camera), target: spec.camera.target, fov: spec.camera.fov }); }
+}
+
 export function studioSetup(ctx: SceneContext, spec: StudioSpec) {
   const r1 = new Float32Array(ctx.count), r2 = new Float32Array(ctx.count);
   for (let i = 0; i < ctx.count; i++) { r1[i] = ctx.helpers.rand(i, 11); r2[i] = ctx.helpers.rand(i, 23); }
   const st: StudioState = {
     rev: undefined, sig: '', layers: [], used: 0, env: [], delta: {},
-    stage: 0, t: 0, timer: 0, moving: false, bg: '', glow: -1, style: '', loopT: 0, morphS: 0, maxForms: 1, r1, r2,
+    stage: 0, t: 0, timer: 0, moving: false, bg: '', glow: -1, style: '', loopT: 0, loopIndex: -1, loopBase: null, morphS: 0, maxForms: 1, r1, r2,
   };
   ctx.state.studio = st;
   ctx.alphas.fill(1);
@@ -276,22 +301,30 @@ export function studioUpdate(ctx: SceneContext, spec: StudioSpec) {
   let st = ctx.state.studio as StudioState | undefined;
   if (!st) { studioSetup(ctx, spec); st = ctx.state.studio as StudioState; }
 
-  // Recorded loop: write its values into the spec, so everything below (and the studio's sliders) follows it.
+  // Recorded loops: the playing one writes its values into the spec, so everything below (and the
+  // studio's sliders) follows it. The scene's "loop" param picks it; without one, spec.activeLoop does.
   let morphFromLoop: number | undefined;
-  const loop = spec.loop;
-  if (loop && loop.enabled && loop.duration > 0) {
+  let want = ctx.params.loop !== undefined ? Math.round(ctx.params.loop) - 1 : spec.activeLoop;
+  if (want >= spec.loops.length || want < -1) want = -1;
+  if (want !== st.loopIndex) {
+    settleLoop(ctx, spec); // put back what the previous loop changed
+    st.loopIndex = want;
+    st.loopT = 0;
+    if (want >= 0) {
+      const now = liveValues(spec);
+      st.loopBase = new Map();
+      for (const tr of spec.loops[want].tracks) if (tr.path in now) st.loopBase.set(tr.path, now[tr.path]);
+    }
+  }
+  const loop = spec.loops[st.loopIndex];
+  if (loop && loop.duration > 0) {
     st.loopT = (st.loopT + ctx.dt) % loop.duration;
-    let cam = false, repaint = false;
     for (const tr of loop.tracks) {
       const v = trackValue(tr, st.loopT);
       if (tr.path === '@morph') { if (typeof v === 'number') morphFromLoop = v; continue; }
-      const changed = setLive(spec, tr.path, v);
-      if (tr.path.startsWith('camera.')) cam = true;
-      // Colours and part reactions are baked per particle: repaint when one changes.
-      else if (changed && (typeof v !== 'number' || tr.path.includes('.parts.')) && tr.path.startsWith('layer:')) repaint = true;
+      writeLooped(ctx, spec, tr.path, v);
     }
-    if (repaint) spec.rev = (spec.rev ?? 0) + 1;
-    if (cam) ctx.setCamera({ position: cameraPosition(spec.camera), target: spec.camera.target, fov: spec.camera.fov });
+    if (loopCam) { loopCam = false; ctx.setCamera({ position: cameraPosition(spec.camera), target: spec.camera.target, fov: spec.camera.fov }); }
   }
   if (st.rev !== spec.rev) sync(ctx, spec, st);
 
@@ -485,6 +518,7 @@ export function createStudioScene(spec: StudioSpec): SceneDefinition {
     particleCount: spec.particleCount,
     models: specModels(spec),
     bloom: spec.space.glow,
+    params: loopParam(spec),
     camera: { position: cameraPosition(spec.camera), target: [...spec.camera.target], autoRotate: spec.camera.autoRotate, autoTilt: spec.camera.autoTilt, fov: spec.camera.fov },
     studio: spec,
     setup: (ctx) => studioSetup(ctx, spec),

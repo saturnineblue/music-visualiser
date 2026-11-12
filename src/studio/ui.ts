@@ -2,10 +2,10 @@ import * as THREE from 'three';
 import type { Engine } from '../engine/engine';
 import { AUDIO_SOURCES, CURVES, type AudioSource, type SceneDefinition } from '../engine/types';
 import { api, HOSTED, type ModelItem } from '../ui/api';
-import { ask } from '../ui/dialog';
-import { createStudioScene, sourceValue, type LayerData, type StudioState } from './runtime';
+import { ask, askText } from '../ui/dialog';
+import { createStudioScene, settleLoop, sourceValue, type LayerData, type StudioState } from './runtime';
 import {
-  AXES, SHAPES, cameraPosition, canonicalSpec, liveValues, newForm, newLayer, newSpec, normalizeSpec, slug, specModels, studioTargets,
+  AXES, SHAPES, cameraPosition, canonicalSpec, liveValues, setLive, newForm, newLayer, newSpec, normalizeSpec, slug, specModels, studioTargets,
   type Leaf, type StudioForm, type StudioLayer, type StudioMapping, type StudioPart, type StudioSource, type StudioSpec,
 } from './spec';
 
@@ -37,6 +37,8 @@ export interface StudioHooks {
 
 /** A loop being recorded: per setting, its keys so far. */
 interface Recording {
+  /** The loop that was playing before, to go back to if nothing gets recorded. */
+  before: number;
   start: number;
   prevT: number;
   last: Record<string, Leaf>;
@@ -75,6 +77,19 @@ const AXIS_LABELS: Record<string, string> = {
   none: 'Off', height: 'Bottom → top', width: 'Left → right', depth: 'Back → front', radius: 'Centre → outside', random: 'Scattered', part: 'One band per part',
 };
 
+const svg = (d: string) => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const ICONS = {
+  // Look around: an orbit around a centre.
+  navigate: svg('<circle cx="12" cy="12" r="2.2"/><path d="M20.5 12a8.5 3.6 0 1 1-4.2-3.1"/><path d="M16.6 5.6l-.3 3.3 3.3.3"/>'),
+  // Move: arrows in four directions.
+  move: svg('<path d="M12 3v18M3 12h18"/><path d="M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>'),
+  record: '<svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="6.5" fill="currentColor"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" width="18" height="18"><rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor"/></svg>',
+  eye: svg('<path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.6"/>'),
+  eyeOff: svg('<path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12z" opacity="0.45"/><path d="M4 4l16 16"/>'),
+};
+const POP_WIDTH = 330;
+
 export class Studio {
   spec: StudioSpec = newSpec();
   isOpen = false;
@@ -90,22 +105,28 @@ export class Studio {
   private refreshers: (() => void)[] = [];
   private rec: Recording | null = null;
   private recTimer = 0;
-  /** Move tool: drag layers in the view instead of the camera. */
-  moveMode = false;
+  /** What dragging in the view does: turn the camera, or move objects. */
+  tool: 'navigate' | 'move' = 'navigate';
+  /** The object whose settings pop-up is open. */
   private selected: string | null = null;
   private drag: { id: string; x: number; y: number } | null = null;
+  private press: { x: number; y: number } | null = null;
+  // Things drawn over the view: object handles, the tool buttons, and the selected object's settings.
   private overlay = el('div', { class: 'st-overlay', hidden: true });
   private handles = new Map<string, HTMLElement>();
+  private tools = el('div', { class: 'st-tools', hidden: true });
+  private pop = el('div', { class: 'st-pop', hidden: true });
+  private popPos = { x: 16, y: 90 };
   private settleUntil = 0;
 
   constructor(private root: HTMLElement, private hooks: StudioHooks) {
     setInterval(() => {
       if (!this.isOpen) return;
       this.refreshMeters();
-      if (this.spec.loop?.enabled || this.drag) this.refreshValues();
+      if (this.spec.activeLoop >= 0 || this.drag) this.refreshValues();
       this.refreshRecorder();
     }, 70);
-    document.body.append(this.overlay);
+    document.body.append(this.overlay, this.tools, this.pop);
     const r = hooks.engine.renderer;
     // The view has priority: when the user moves the camera, the camera settings follow.
     r.controls.addEventListener('change', () => {
@@ -115,8 +136,8 @@ export class Studio {
     const canvas = r.renderer.domElement;
     canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e));
     canvas.addEventListener('pointermove', (e) => this.onPointerMove(e));
-    canvas.addEventListener('pointerup', () => this.onPointerUp());
-    canvas.addEventListener('pointercancel', () => this.onPointerUp());
+    canvas.addEventListener('pointerup', (e) => this.onPointerUp(e));
+    canvas.addEventListener('pointercancel', () => { this.drag = null; this.press = null; });
     canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     const frame = () => { requestAnimationFrame(frame); if (this.isOpen) this.updateOverlay(); };
     requestAnimationFrame(frame);
@@ -156,6 +177,9 @@ export class Studio {
     this.root.parentElement?.classList.add('studio-open');
     this.selected = null;
     this.rec = null;
+    this.tool = 'navigate';
+    this.overlay.hidden = false;
+    this.tools.hidden = false;
     this.render();
     await this.rebuild(false);
     this.hooks.tip('st-welcome');
@@ -164,11 +188,16 @@ export class Studio {
   private async close() {
     if (this.dirty && !(await ask(`"${this.spec.name}" has unsaved changes.\n\nLeave the studio without saving them?`, { ok: 'Discard changes', danger: true }))) return;
     if (this.rec) this.stopRecording(false);
-    this.setMove(false);
+    this.setTool('navigate');
     this.isOpen = false;
+    this.selected = null;
     this.root.hidden = true;
     this.root.parentElement?.classList.remove('studio-open');
     this.root.replaceChildren();
+    this.overlay.hidden = true;
+    this.tools.hidden = true;
+    this.pop.hidden = true;
+    this.pop.replaceChildren();
     this.meters = [];
     this.hooks.closed(this.savedId);
   }
@@ -178,12 +207,17 @@ export class Studio {
 
   // ---------- Applying changes ----------
 
-  /** Re-run the scene on the stage: needed when models, layers or the particle count change. */
+  /** Re-run the scene on the stage: needed when models, layers, loops or the particle count change. */
   private rebuild(keepView = true) {
     this.applying = this.applying.then(async () => {
       if (!this.isOpen) return;
-      // Restarting the scene resets the camera to the spec: take the current view first, so nothing jumps.
-      if (keepView && this.hooks.engine.scene?.studio === this.spec && !this.loopDrivesCamera()) this.syncCameraFromView();
+      const engine = this.hooks.engine;
+      if (engine.scene?.studio === this.spec && engine.field) {
+        // A playing loop holds some settings mid-way: put them back first, so the restart begins from the real values.
+        settleLoop(engine.field.ctx, this.spec);
+        // Restarting resets the camera to the spec: take the current view first, so nothing jumps.
+        if (keepView) this.syncCameraFromView();
+      }
       await this.hooks.run(createStudioScene(this.spec));
       if (this.isOpen) this.render(); // part names are known once models have loaded
     });
@@ -205,7 +239,7 @@ export class Studio {
 
   private async save() {
     const spec = this.spec;
-    if (!spec.layers.length) return this.hooks.toast('Add at least one layer before saving.');
+    if (!spec.layers.length) return this.hooks.toast('Add at least one object before saving.');
     if (this.savedId === null) spec.id = slug(spec.name);
     // Save what is on screen: the camera may have drifted (auto-rotation) since it was last copied.
     if (this.hooks.engine.scene?.studio === spec && !this.loopDrivesCamera()) this.syncCameraFromView();
@@ -259,8 +293,9 @@ export class Studio {
       await this.hooks.refresh();
       const layer = newLayer(res.name, newForm('model', res.id));
       this.spec.layers.push(layer);
-      this.open_.set('layer:' + layer.id, true);
-      this.log.unshift({ text: `✓ Added "${res.name}" as a layer (models/${res.id}.glb).` });
+      this.selected = layer.id;
+      this.popPos = { x: 16, y: 90 };
+      this.log.unshift({ text: `✓ Added "${res.name}" as an object (models/${res.id}.glb).` });
     } catch (e) {
       this.log.unshift({ text: `✗ ${(e as Error).message}` });
     } finally {
@@ -274,7 +309,7 @@ export class Studio {
   private refreshValues() { for (const f of this.refreshers) f(); }
 
   private loopDrivesCamera() {
-    return !!this.spec.loop?.enabled && this.spec.loop.tracks.some((t) => t.path.startsWith('camera.'));
+    return !!this.spec.loops[this.spec.activeLoop]?.tracks.some((t) => t.path.startsWith('camera.'));
   }
 
   /** Point the real camera where the camera settings say (after a slider changed). */
@@ -297,19 +332,48 @@ export class Studio {
     this.refreshHead();
   }
 
-  // ---------- Move tool: select and drag layers in the view ----------
+  // ---------- Tools in the view: look around, move objects, select ----------
 
-  setMove(on: boolean) {
-    if (on === this.moveMode) return;
-    this.moveMode = on;
+  setTool(tool: 'navigate' | 'move') {
+    if (tool === this.tool) return;
+    this.tool = tool;
     const r = this.hooks.engine.renderer;
-    r.controls.enabled = !on;
-    r.renderer.domElement.style.cursor = on ? 'move' : '';
-    this.overlay.hidden = !on;
-    this.overlay.style.right = `${this.root.parentElement?.offsetWidth ?? 0}px`; // keep handles off the panel
-    if (!on) { this.drag = null; this.selected = null; }
-    if (this.isOpen) this.render();
-    if (on) this.hooks.tip('st-move-on');
+    r.controls.enabled = tool === 'navigate';
+    r.renderer.domElement.style.cursor = tool === 'move' ? 'move' : '';
+    this.drag = null;
+    if (this.isOpen) this.renderTools();
+    if (tool === 'move') this.hooks.tip('st-move-on');
+  }
+
+  /** Esc: close the open settings pop-up, or go back to looking around. */
+  escape() {
+    if (this.selected) this.selectObject(null);
+    else this.setTool('navigate');
+  }
+
+  private panelWidth() {
+    const p = this.root.parentElement;
+    return p && !p.classList.contains('hidden') ? p.offsetWidth : 0;
+  }
+
+  /** Open an object's settings pop-up next to it (null closes it). */
+  private selectObject(id: string | null) {
+    this.selected = id;
+    if (id) {
+      const ld = this.runtimeLayers().find((l) => l.id === id);
+      const stageW = window.innerWidth - this.panelWidth();
+      let x = 16, y = 90;
+      if (ld) {
+        const p = this.project(ld), r = Math.min(p.radius, 170);
+        x = p.x + r + 28;
+        if (x + POP_WIDTH > stageW - 12) x = p.x - r - 28 - POP_WIDTH; // no room on the right: go left of it
+        if (x < 12) x = Math.max(12, stageW - POP_WIDTH - 12);
+        y = p.y - 170;
+      }
+      this.popPos = { x, y: Math.min(Math.max(64, y), Math.max(64, window.innerHeight - 440)) };
+      this.hooks.tip('st-popup');
+    }
+    this.render();
   }
 
   private runtimeLayers(): LayerData[] {
@@ -340,16 +404,15 @@ export class Studio {
   }
 
   private onPointerDown(e: PointerEvent) {
-    if (!this.isOpen || !this.moveMode || e.button !== 0) return;
+    if (!this.isOpen || e.button !== 0) return;
+    this.press = { x: e.clientX, y: e.clientY };
+    if (this.tool !== 'move') return;
     const id = this.pick(e.clientX, e.clientY);
-    const was = this.selected;
-    this.selected = id;
     if (id) {
       this.drag = { id, x: e.clientX, y: e.clientY };
       (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-      this.open_.set('layer:' + id, true);
+      if (id !== this.selected) this.selectObject(id);
     }
-    if (id !== was) this.render();
     e.preventDefault();
   }
 
@@ -374,14 +437,19 @@ export class Studio {
     this.refreshHead();
   }
 
-  private onPointerUp() {
-    if (!this.drag) return;
+  private onPointerUp(e: PointerEvent) {
+    const press = this.press, dragged = this.drag;
+    this.press = null;
     this.drag = null;
-    this.refreshValues();
+    if (dragged) this.refreshValues();
+    if (!this.isOpen || !press || Math.hypot(e.clientX - press.x, e.clientY - press.y) > 5) return; // that was a drag
+    // A plain click: open the settings of the object under it, or close them on empty space.
+    const id = this.pick(e.clientX, e.clientY);
+    if (id !== this.selected) this.selectObject(id);
   }
 
   private onWheel(e: WheelEvent) {
-    if (!this.isOpen || !this.moveMode) return;
+    if (!this.isOpen || this.tool !== 'move') return;
     e.preventDefault();
     const L = this.spec.layers.find((x) => x.id === this.selected);
     if (!L) return;
@@ -390,17 +458,21 @@ export class Studio {
     this.refreshHead();
   }
 
-  /** Handles drawn over the view in move mode: one per layer, the selected one ringed. */
+  /** Each frame: keep the object handles on their objects (and off the panel). */
   private updateOverlay() {
-    if (!this.moveMode) return;
+    const panelW = this.panelWidth();
+    const right = `${panelW}px`;
+    if (this.overlay.style.right !== right) this.overlay.style.right = right; // keep handles off the panel
     const seen = new Set<string>();
     for (const ld of this.runtimeLayers()) {
       const L = this.spec.layers.find((x) => x.id === ld.id);
-      if (!L) continue;
+      const sel = ld.id === this.selected;
+      // Move shows a handle on every object; otherwise only the selected one is ringed.
+      if (!L || (this.tool !== 'move' && !sel)) continue;
       seen.add(ld.id);
       let h = this.handles.get(ld.id);
       if (!h) { h = el('div', { class: 'st-handle' }, el('i'), el('span')); this.handles.set(ld.id, h); this.overlay.append(h); }
-      const p = this.project(ld), sel = ld.id === this.selected;
+      const p = this.project(ld);
       h.hidden = p.depth <= 0;
       h.classList.toggle('selected', sel);
       h.style.transform = `translate(${p.x}px, ${p.y}px)`;
@@ -413,7 +485,71 @@ export class Studio {
     for (const [id, h] of this.handles) if (!seen.has(id)) { h.remove(); this.handles.delete(id); }
   }
 
-  // ---------- Loop recorder ----------
+  private renderTools() {
+    const tool = (name: 'navigate' | 'move', label: string, title: string) =>
+      el('button', { class: 'st-tool' + (this.tool === name ? ' active' : ''), title, onclick: () => this.setTool(name) },
+        el('span', { class: 'st-icon', innerHTML: ICONS[name] }), label);
+    const rec = el('button', {
+      class: 'st-tool st-rec' + (this.rec ? ' recording' : ''),
+      title: this.rec ? 'Stop recording and keep the loop' : 'Record a loop: press, then change things (sliders, colours, objects, the camera), and press again',
+      onclick: () => (this.rec ? this.stopRecording(true) : this.startRecording()),
+    }, el('span', { class: 'st-icon', innerHTML: this.rec ? ICONS.stop : ICONS.record }), el('span', { class: 'st-rec-time' }, this.rec ? '0:00' : 'Record'));
+    this.tools.replaceChildren(
+      tool('navigate', 'Look', 'Look around: drag to turn the camera, scroll to zoom, right-drag to slide (N)'),
+      tool('move', 'Move', 'Move objects: drag one to slide it, scroll to resize it, Shift-drag for depth (M)'),
+      el('i', { class: 'st-tool-sep' }),
+      rec,
+    );
+  }
+
+  /** The selected object's settings, floating in the view next to it. */
+  private renderPopup() {
+    const L = this.spec.layers.find((x) => x.id === this.selected);
+    if (!this.isOpen || !L) {
+      this.pop.hidden = true;
+      this.pop.replaceChildren();
+      return;
+    }
+    const scroll = this.pop.querySelector('.st-pop-body')?.scrollTop ?? 0;
+    const name = el('input', { type: 'text', value: L.name, class: 'st-pop-name', title: 'Rename this object' });
+    name.oninput = () => { L.name = name.value; };
+    name.onchange = () => this.render();
+    const head = el('div', { class: 'st-pop-head', title: 'Drag to move this window' }, name,
+      el('button', { title: 'Close (Esc)', onclick: () => this.selectObject(null) }, '✕'));
+    head.onpointerdown = (e) => {
+      if ((e.target as HTMLElement).closest('input, button')) return;
+      const ox = e.clientX - this.popPos.x, oy = e.clientY - this.popPos.y;
+      head.setPointerCapture(e.pointerId);
+      head.onpointermove = (m) => {
+        this.popPos = {
+          x: Math.min(window.innerWidth - 80, Math.max(-POP_WIDTH + 80, m.clientX - ox)),
+          y: Math.min(window.innerHeight - 40, Math.max(0, m.clientY - oy)),
+        };
+        this.placePopup();
+      };
+      head.onpointerup = () => { head.onpointermove = null; head.onpointerup = null; };
+    };
+    const body = el('div', { class: 'st-pop-body' }, ...this.layerBody(L, this.spec.layers.indexOf(L)));
+    this.pop.replaceChildren(head, body);
+    this.pop.hidden = false;
+    this.placePopup();
+    body.scrollTop = scroll;
+  }
+
+  private placePopup() {
+    this.pop.style.left = `${this.popPos.x}px`;
+    this.pop.style.top = `${this.popPos.y}px`;
+  }
+
+  // ---------- Loops ----------
+
+  /** Choose which loop plays (-1 = none). The scene's "loop" param is what the engine reads. */
+  private setActiveLoop(index: number, rerender = true) {
+    this.spec.activeLoop = index;
+    const base = this.hooks.engine.logic.baseParams;
+    if ('loop' in base) base.loop = index + 1;
+    this.changed('live', rerender);
+  }
 
   private sampleValues(): Record<string, Leaf> {
     const vals = liveValues(this.spec);
@@ -423,8 +559,12 @@ export class Studio {
   }
 
   private startRecording() {
-    if (this.spec.loop) this.spec.loop.enabled = false; // the old loop must not fight what is being recorded
-    this.rec = { start: performance.now(), prevT: 0, last: this.sampleValues(), tracks: new Map() };
+    const before = this.spec.activeLoop;
+    // A playing loop must not fight what is being recorded: stop it and put its settings back first.
+    const engine = this.hooks.engine;
+    if (engine.scene?.studio === this.spec && engine.field) settleLoop(engine.field.ctx, this.spec);
+    this.setActiveLoop(-1, false);
+    this.rec = { before, start: performance.now(), prevT: 0, last: this.sampleValues(), tracks: new Map() };
     this.recTimer = window.setInterval(() => this.recordSample(), 33);
     this.render();
     this.hooks.tip('st-recording');
@@ -461,46 +601,74 @@ export class Studio {
         if (tr.t[tr.t.length - 1] < duration) { tr.t.push(duration); tr.v.push(tr.v[tr.v.length - 1]); }
         return { path, t: tr.t, v: tr.v };
       });
-      this.spec.loop = { enabled: true, duration, tracks };
-      const st = this.hooks.engine.field?.ctx.state.studio as StudioState | undefined;
-      if (st) st.loopT = 0;
+      const names = new Set(this.spec.loops.map((l) => l.name));
+      let n = this.spec.loops.length + 1;
+      while (names.has(`Loop ${n}`)) n++;
+      // Put the settings back to where the recording started: the loop replays them from there.
+      for (const tr of tracks) if (!tr.path.startsWith('@')) setLive(this.spec, tr.path, tr.v[0]);
+      this.spec.loops.push({ name: `Loop ${n}`, duration, tracks });
+      this.spec.activeLoop = this.spec.loops.length - 1;
+      this.open_.set('loops', true);
+      this.spec.rev = (this.spec.rev ?? 0) + 1;
+      this.rebuild(); // the scene's "loop" control now has one more step
       this.hooks.tip('st-loop-made');
-    } else if (keep) {
-      if (this.spec.loop) this.spec.loop.enabled = true;
-      this.hooks.toast('Nothing changed while recording, so there is no loop yet.\n\nPress Record, then move sliders, drag layers (✥ Move) or turn the camera, and press Stop.');
+      return;
     }
+    if (keep) {
+      this.hooks.toast('Nothing changed while recording, so there is no new loop.\n\nPress Record, then move sliders, drag objects (Move) or turn the camera, and press it again.');
+    }
+    this.setActiveLoop(rec.before, false);
     if (this.isOpen) this.render();
   }
 
   private refreshRecorder() {
-    const b = this.root.querySelector<HTMLElement>('.st-rec');
-    if (b && this.rec) b.textContent = `■ Stop  ${fmtClock((performance.now() - this.rec.start) / 1000)}`;
+    const b = this.tools.querySelector<HTMLElement>('.st-rec-time');
+    if (b && this.rec) b.textContent = fmtClock((performance.now() - this.rec.start) / 1000);
   }
 
-  private loopBlock() {
-    const loop = this.spec.loop;
-    const kids: (Node | null)[] = [
-      el('div', { class: 'hint st-note' }, 'Press Record, then play: move sliders, pick colours, drag layers, turn the camera, let it morph. Press Stop and your moves replay as a loop, also after saving.'),
-      el('div', { class: 'row' },
-        el('button', { class: 'st-rec' + (this.rec ? ' recording' : ''), onclick: () => (this.rec ? this.stopRecording(true) : this.startRecording()) },
-          this.rec ? '■ Stop  0:00' : loop ? '● Record again' : '● Record'),
-        loop && !this.rec ? el('button', { class: 'st-danger', onclick: () => { delete this.spec.loop; this.changed('live', true); } }, 'Delete loop') : null),
-    ];
-    if (loop && !this.rec) {
-      const names = [...new Set(loop.tracks.map((t) => this.pathLabel(t.path)))];
-      kids.push(
-        this.check('Play the loop', loop, 'enabled', 'live', true),
-        el('div', { class: 'hint st-note' }, `${loop.duration.toFixed(1)} s · ${loop.tracks.length} settings: ${names.slice(0, 6).join(', ')}${names.length > 6 ? '…' : ''}.` +
-          (loop.enabled ? ' While it plays, the loop drives those settings.' : '')));
-    }
-    return this.details('loop', el('span', {}, 'Loop recorder', loop ? el('span', { class: 'hint' }, ` · ${loop.duration.toFixed(1)} s${loop.enabled ? ', playing' : ', paused'}`) : null), false, ...kids);
+  private async renameLoop(index: number) {
+    const loop = this.spec.loops[index];
+    const name = await askText('Loop name:', loop.name, { ok: 'Rename' });
+    if (!name) return;
+    loop.name = name.slice(0, 60);
+    this.rebuild();
+  }
+
+  private deleteLoop(index: number) {
+    const engine = this.hooks.engine;
+    if (engine.scene?.studio === this.spec && engine.field) settleLoop(engine.field.ctx, this.spec);
+    const active = this.spec.activeLoop;
+    this.spec.loops.splice(index, 1);
+    this.spec.activeLoop = active === index ? -1 : active > index ? active - 1 : active;
+    this.rebuild();
+  }
+
+  /** The scene's loops: pick the one that plays, rename or delete them. Recording happens in the view. */
+  private loopsBlock() {
+    const s = this.spec;
+    const row = (index: number, name: string, meta: string) => {
+      const on = s.activeLoop === index;
+      return el('div', { class: 'st-row st-loop' + (on ? ' active' : ''), onclick: () => this.setActiveLoop(index), title: on ? 'Playing' : 'Click to play this one' },
+        el('span', { class: 'st-radio' + (on ? ' on' : '') }),
+        el('span', { class: 'st-row-name' }, name), el('span', { class: 'hint' }, meta),
+        index >= 0 ? el('button', { title: 'Rename', onclick: (e: Event) => { e.stopPropagation(); this.renameLoop(index); } }, '✎') : null,
+        index >= 0 ? el('button', { title: 'Delete this loop', onclick: (e: Event) => { e.stopPropagation(); this.deleteLoop(index); } }, '✕') : null);
+    };
+    return this.details('loops', el('span', {}, 'Loops', el('span', { class: 'hint' }, s.loops.length ? ` · ${s.loops.length}, ${s.activeLoop >= 0 ? `playing “${s.loops[s.activeLoop].name}”` : 'none playing'}` : ' · none yet')), true,
+      el('div', { class: 'hint st-note' }, s.loops.length
+        ? 'One loop plays at a time. Each replays the changes you recorded: sliders, colours, moved objects, the camera, morphing.'
+        : 'A loop replays changes you record: sliders, colours, moved objects, the camera, morphing. Press Record in the view, change things, and press it again.'),
+      s.loops.length ? row(-1, 'No loop', 'the scene as set') : null,
+      ...s.loops.map((l, i) => row(i, l.name, `${l.duration.toFixed(1)} s · ${[...new Set(l.tracks.map((t) => this.pathLabel(t.path)))].slice(0, 3).join(', ')}`)),
+      s.loops.length ? el('div', { class: 'hint st-note' }, 'Outside the studio, the scene\'s “Loop” slider (Controls → Scene params) picks the loop, so a set can hold one entry per loop.') : null,
+    );
   }
 
   /** A short human name for a recorded setting. */
   private pathLabel(path: string) {
     if (path === '@morph') return 'morphing';
     const m = /^layer:([^.]+)\./.exec(path);
-    if (m) return this.spec.layers.find((L) => L.id === m[1])?.name ?? 'a layer';
+    if (m) return this.spec.layers.find((L) => L.id === m[1])?.name ?? 'an object';
     return path.split('.')[0];
   }
 
@@ -647,14 +815,10 @@ export class Studio {
     const s = this.spec;
     const back = el('button', { onclick: () => this.close(), title: 'Leave the studio' }, '← Back');
     const save = el('button', { class: 'accent', onclick: () => this.save() }, 'Save scene');
-    const move = el('button', {
-      class: 'st-move' + (this.moveMode ? ' active' : ''), onclick: () => this.setMove(!this.moveMode),
-      title: 'Move layers with the mouse (M). While it is on, dragging the view moves a layer instead of the camera.',
-    }, '✥ Move');
     const cam = (label: string, key: 'distance' | 'azimuth' | 'elevation' | 'fov' | 'autoRotate' | 'autoTilt', min: number, max: number, step: number, title = '') =>
       this.slider(label, s.camera, key, min, max, step, 'live', title, () => this.applyCamera());
     this.root.replaceChildren(
-      el('div', { class: 'st-head' }, back, el('span', { class: 'st-title' }), move, save),
+      el('div', { class: 'st-head' }, back, el('span', { class: 'st-title' }), save),
       el('div', { class: 'hint st-dirty' }),
       this.details('scene', 'Scene', true,
         this.text('Name', s, 'name'),
@@ -662,14 +826,45 @@ export class Studio {
         this.slider('Particles', s, 'particleCount', 5000, 150000, 5000, 'build', 'More particles look denser but cost speed. 60,000 is a good start.'),
         HOSTED && this.savedId ? el('button', { class: 'st-danger', onclick: () => this.remove() }, 'Delete this scene') : null,
       ),
-      this.loopBlock(),
+
+      el('h3', {}, 'Objects ', el('span', { class: 'hint' }, 'click one, here or in the view, for its settings')),
+      ...s.layers.map((L, i) => this.layerRow(L, i)),
+      this.addLayerRow(),
+
+      el('h3', {}, 'Dramaturgy ', el('span', { class: 'hint' }, 'what happens, and when')),
+      this.loopsBlock(),
+      this.details('motion', 'Motion and morphing', false,
+        this.slider('Tightness', s.motion, 'spring', 0.5, 30, 0.5, 'live', 'How firmly particles hold their place'),
+        this.slider('Damping', s.motion, 'damping', 0.2, 12, 0.1),
+        this.slider('Turbulence', s.motion, 'turbulence', 0, 8, 0.05),
+        this.slider('Beat burst', s.motion, 'burst', 0, 20, 0.5, 'live', 'Outward kick on each beat'),
+        el('div', { class: 'hint st-note' }, 'Morphing applies to objects with more than one form.'),
+        this.select('Morph', s.morph, 'mode', [['beats', 'Every few beats'], ['time', 'Every few seconds'], ['manual', 'By the slider / mappings']], 'live'),
+        s.morph.mode === 'manual'
+          ? this.slider('Position', s.morph, 'position', 0, 1, 0.01)
+          : this.slider(s.morph.mode === 'beats' ? 'Beats per form' : 'Seconds per form', s.morph, 'every', 1, 64, 1),
+        this.slider('Transition (s)', s.morph, 'blend', 0.2, 12, 0.1),
+      ),
+      this.details('maps', el('span', {}, 'Sound mappings', el('span', { class: 'hint' }, ` · ${s.mappings.length}`)), false,
+        el('div', { class: 'hint st-note' }, 'A sound (a frequency range, bass, the beat…) drives a setting.'),
+        ...s.mappings.map((m, i) => this.mappingBlock(m, i)),
+        el('button', { onclick: () => {
+          s.mappings.push({ source: { kind: 'band', lo: 60, hi: 250 }, target: 'brightness', amount: 0.5, curve: 'linear', attack: 0, release: 0.2, enabled: true });
+          this.changed('live', true);
+        } }, '+ Mapping'),
+        el('div', { class: 'hint st-note' }, 'The macro sliders and logics still apply on top: intensity scales reactions, chaos scales turbulence, morph and impulse add to morphing and the beat burst.'),
+      ),
+
+      el('h3', {}, 'Look ', el('span', { class: 'hint' }, 'space, camera and light')),
       this.details('space', 'Space and camera', false,
         this.color('Space colour', s.space, 'color', 'live'),
         this.select('Particles', s.space, 'particles', [
           ['auto', 'Automatic'], ['glow', 'Glowing (adds light, for dark space)'], ['solid', 'Solid dots (for light space)'],
         ], 'live', false),
         this.slider('Glow', s.space, 'glow', 0, 3, 0.05, 'live', 'Bloom around bright particles. Not used with solid dots.'),
-        el('div', { class: 'hint st-note' }, 'Camera: drag the view to turn it, scroll to zoom, right-drag to slide. These settings follow what you see.'),
+        this.slider('Brightness', s, 'brightness', 0, 3, 0.05),
+        this.slider('Colour shift', s, 'hueShift', -0.5, 0.5, 0.01, 'live', 'Rotates every colour around the colour wheel'),
+        el('div', { class: 'hint st-note' }, 'Camera: with Look on, drag the view to turn it, scroll to zoom, right-drag to slide. These settings follow what you see.'),
         cam('Distance', 'distance', 5, 150, 0.5),
         cam('Angle around', 'azimuth', -180, 180, 1, 'Where the camera stands around the scene: 0 is in front, 90 is from the right'),
         cam('Angle up/down', 'elevation', -89, 89, 1, 'Above (+) or below (−) the horizon'),
@@ -688,44 +883,23 @@ export class Studio {
         this.color('Fill light', s.light, 'fill', 'live'),
         this.slider('Fill intensity', s.light, 'fillIntensity', 0, 3, 0.05, 'live', 'Light from the opposite side'),
       ),
-      this.details('motion', 'Motion and morphing', false,
-        this.slider('Tightness', s.motion, 'spring', 0.5, 30, 0.5, 'live', 'How firmly particles hold their place'),
-        this.slider('Damping', s.motion, 'damping', 0.2, 12, 0.1),
-        this.slider('Turbulence', s.motion, 'turbulence', 0, 8, 0.05),
-        this.slider('Beat burst', s.motion, 'burst', 0, 20, 0.5, 'live', 'Outward kick on each beat'),
-        this.slider('Brightness', s, 'brightness', 0, 3, 0.05),
-        this.slider('Colour shift', s, 'hueShift', -0.5, 0.5, 0.01, 'live', 'Rotates every colour around the colour wheel'),
-        el('div', { class: 'hint st-note' }, 'Morphing applies to layers with more than one form.'),
-        this.select('Morph', s.morph, 'mode', [['beats', 'Every few beats'], ['time', 'Every few seconds'], ['manual', 'By the slider / mappings']], 'live'),
-        s.morph.mode === 'manual'
-          ? this.slider('Position', s.morph, 'position', 0, 1, 0.01)
-          : this.slider(s.morph.mode === 'beats' ? 'Beats per form' : 'Seconds per form', s.morph, 'every', 1, 64, 1),
-        this.slider('Transition (s)', s.morph, 'blend', 0.2, 12, 0.1),
-      ),
-      el('h3', {}, 'Layers ', el('span', { class: 'hint' }, 'shapes and models, side by side')),
-      ...s.layers.map((L, i) => this.layerBlock(L, i)),
-      this.addLayerRow(),
-      el('h3', {}, 'Mappings ', el('span', { class: 'hint' }, 'sound → settings')),
-      ...s.mappings.map((m, i) => this.mappingBlock(m, i)),
-      el('button', { onclick: () => {
-        s.mappings.push({ source: { kind: 'band', lo: 60, hi: 250 }, target: 'brightness', amount: 0.5, curve: 'linear', attack: 0, release: 0.2, enabled: true });
-        this.changed('live', true);
-      } }, '+ Mapping'),
-      el('div', { class: 'hint st-note' }, 'The macro sliders and logics still apply on top: intensity scales reactions, chaos scales turbulence, morph and impulse add to morphing and the beat burst.'),
     );
     this.refreshHead();
     this.renderLog();
     if (this.root.parentElement) this.root.parentElement.scrollTop = scroll;
+    this.renderTools();
+    this.renderPopup();
   }
 
   private addLayerRow() {
-    const pick = el('select', {}, el('option', { value: '' }, '+ Add layer…'), ...this.formOptions());
+    const pick = el('select', {}, el('option', { value: '' }, '+ Add an object…'), ...this.formOptions());
     pick.onchange = () => {
       if (!pick.value) return;
       const form = this.formFrom(pick.value);
       const layer = newLayer(form.kind === 'model' ? form.model : SHAPE_LABELS[form.shape], form);
       this.spec.layers.push(layer);
-      this.open_.set('layer:' + layer.id, true);
+      this.selected = layer.id; // open its settings straight away
+      this.popPos = { x: 16, y: 90 };
       this.changed('build', true);
     };
     const kids: Node[] = [pick];
@@ -747,21 +921,38 @@ export class Studio {
       el('div', { class: 'progress' }, p.text, p.image ? el('img', { src: p.image, alt: p.text }) : null)));
   }
 
-  private layerBlock(L: StudioLayer, index: number) {
+  /** One object in the panel's list: show/hide, order, and a click to open its settings. */
+  private layerRow(L: StudioLayer, index: number) {
     const s = this.spec;
     const total = s.layers.filter((x) => x.visible).reduce((a, x) => a + x.share, 0) || 1;
-    const pct = L.visible ? `${Math.round((L.share / total) * 100)}%` : 'hidden';
+    const stop = (fn: () => void) => (e: Event) => { e.stopPropagation(); fn(); };
     const move = (by: number) => {
       const j = index + by;
       if (j < 0 || j >= s.layers.length) return;
       [s.layers[index], s.layers[j]] = [s.layers[j], s.layers[index]];
       this.changed('build', true);
     };
+    const what = L.forms.map((F) => (F.kind === 'model' ? F.model : SHAPE_LABELS[F.shape].replace(/ \(.*/, ''))).join(' → ');
+    return el('div', {
+      class: 'st-row' + (L.id === this.selected ? ' active' : '') + (L.visible ? '' : ' off'),
+      title: 'Open this object\'s settings', onclick: () => this.selectObject(L.id === this.selected ? null : L.id),
+    },
+      el('button', { class: 'st-eye', title: L.visible ? 'Hide' : 'Show', innerHTML: L.visible ? ICONS.eye : ICONS.eyeOff, onclick: stop(() => { L.visible = !L.visible; this.changed('build', true); }) }),
+      el('span', { class: 'st-row-name' }, L.name),
+      el('span', { class: 'hint' }, L.visible ? `${what} · ${Math.round((L.share / total) * 100)}%` : 'hidden'),
+      el('button', { title: 'Move up', disabled: index === 0, onclick: stop(() => move(-1)) }, '↑'),
+      el('button', { title: 'Move down', disabled: index === s.layers.length - 1, onclick: stop(() => move(1)) }, '↓'),
+    );
+  }
+
+  /** Everything about one object: what goes in its pop-up. */
+  private layerBody(L: StudioLayer, index: number): (Node | null | false)[] {
+    const s = this.spec;
     const sp = L.spectrum;
-    return this.details('layer:' + L.id, el('span', { class: L.id === this.selected ? 'st-selected' : '' }, L.name, el('span', { class: 'hint' }, ` · ${pct} of particles`)), index === 0,
-      this.text('Name', L, 'name', () => this.render()),
+    void index;
+    return [
       this.check('Visible', L, 'visible', 'build', true),
-      this.slider('Share', L, 'share', 1, 100, 1, 'build', 'This layer\'s share of the particles, relative to the other layers'),
+      this.slider('Share', L, 'share', 1, 100, 1, 'build', 'This object\'s share of the particles, relative to the others'),
       ...L.forms.map((F, fi) => this.formBlock(L, F, fi)),
       (() => {
         const add = el('select', { title: 'Particles flow from one form to the next' }, el('option', { value: '' }, '+ Add a form to morph into…'), ...this.formOptions());
@@ -782,7 +973,7 @@ export class Studio {
         this.slider('Explode', L, 'explode', -10, 20, 0.1, 'live', 'Pushes particles outward along the surface'),
       ),
       this.details('spec:' + L.id, el('span', {}, 'Spectrum across the shape', el('span', { class: 'hint' }, ` · ${AXIS_LABELS[sp.axis]}`)), false,
-        el('div', { class: 'hint st-note' }, 'Lays the spectrum over the layer: low frequencies at one end, high at the other, so each region reacts to its own part of the sound.'),
+        el('div', { class: 'hint st-note' }, 'Lays the spectrum over the object: low frequencies at one end, high at the other, so each region reacts to its own part of the sound.'),
         this.select('Spread', sp, 'axis', ['none', ...AXES, 'part'].map((a) => [a, AXIS_LABELS[a]] as [string, string]), 'paint'),
         sp.axis !== 'none' && this.slider('From (Hz)', sp, 'lo', 20, 16000, 10),
         sp.axis !== 'none' && this.slider('To (Hz)', sp, 'hi', 20, 16000, 10),
@@ -793,15 +984,14 @@ export class Studio {
         sp.axis !== 'none' && this.slider('Tint amount', sp, 'tintAmount', 0, 1, 0.01),
       ),
       el('div', { class: 'row' },
-        el('button', { onclick: () => move(-1), disabled: index === 0, title: 'Move up' }, '↑'),
-        el('button', { onclick: () => move(1), disabled: index === s.layers.length - 1, title: 'Move down' }, '↓'),
         el('button', { class: 'st-danger', onclick: () => {
-          s.layers.splice(index, 1);
+          s.layers.splice(s.layers.indexOf(L), 1);
           s.mappings = s.mappings.filter((m) => !m.target.startsWith(`layer:${L.id}.`));
+          this.selected = null;
           this.changed('build', true);
-        } }, 'Delete layer'),
+        } }, 'Delete this object'),
       ),
-    );
+    ];
   }
 
   private formBlock(L: StudioLayer, F: StudioForm, fi: number) {

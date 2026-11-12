@@ -19,21 +19,23 @@ const TIPS: Tip[] = [
 
   { id: 'st-welcome', where: 'studio', text: 'Welcome to the studio! Everything here changes the scene while it plays, so poke at things and see what happens.' },
   { id: 'st-camera', where: 'studio', text: 'Drag the view to frame your shot. The camera settings follow you, so what you see is what you save.' },
-  { id: 'st-layers', where: 'studio', text: 'One layer gets lonely. Add another shape or a 3D model with “+ Add layer…”.' },
-  { id: 'st-move', where: 'studio', text: 'Press “✥ Move” (or M), then drag a shape in the view to slide it around.' },
-  { id: 'st-morph', where: 'studio', text: 'Give a layer a second form and it will melt from one into the other. Try a sphere that becomes a galaxy.' },
+  { id: 'st-click', where: 'studio', text: 'Click a shape in the view and its settings pop up right next to it.' },
+  { id: 'st-layers', where: 'studio', text: 'One object gets lonely. Add another shape or a 3D model with “+ Add an object…”.' },
+  { id: 'st-move', where: 'studio', text: 'See the buttons at the bottom of the view? “Move” (or M) lets you drag shapes around. “Look” (or N) hands the mouse back to the camera.' },
+  { id: 'st-morph', where: 'studio', text: 'Give an object a second form and it will melt from one into the other. Try a sphere that becomes a galaxy.' },
   { id: 'st-map', where: 'studio', text: 'Mappings are the fun part: pick a sound, pick a setting, and let the music do the work.' },
-  { id: 'st-spectrum', where: 'studio', text: '“Spectrum across the shape” turns a layer into a living equaliser: bass at one end, sparkle at the other.' },
-  { id: 'st-record', where: 'studio', text: 'Open “Loop recorder”, hit Record and wiggle things. Your moves come back as a loop.' },
+  { id: 'st-spectrum', where: 'studio', text: '“Spectrum across the shape” turns an object into a living equaliser: bass at one end, sparkle at the other.' },
+  { id: 'st-record', where: 'studio', text: 'Hit the red Record button in the view and wiggle things. Your moves come back as a loop, and you can keep several.' },
   { id: 'st-save', where: 'studio', text: 'Like what you made? “Save scene” keeps it in your scene list.' },
 
   // Shown only when something happens (never in the idle rotation).
   { id: 'st-move-on', where: 'studio', text: 'Move is on: click a shape to grab it and drag. Scroll to resize it, hold Shift to push it away or pull it closer. Press M when you\'re done.' },
-  { id: 'st-recording', where: 'studio', text: 'Recording! Move sliders, drag layers, swing the camera. Press Stop when you\'ve had your fun.' },
-  { id: 'st-loop-made', where: 'studio', text: 'That\'s a loop! It keeps playing here and in the saved scene. Untick “Play the loop” to pause it.' },
+  { id: 'st-recording', where: 'studio', text: 'Recording! Move sliders, drag objects, swing the camera. Press the button again when you\'ve had your fun.' },
+  { id: 'st-loop-made', where: 'studio', text: 'That\'s a loop! Find it under “Loops” in the panel: pick which one plays, rename it, or record another.' },
+  { id: 'st-popup', where: 'studio', text: 'This little window holds everything about the object you clicked. Drag its top edge to move it out of the way, Esc closes it.' },
   { id: 'st-saved', where: 'studio', text: 'Saved. Head “← Back” to find it in the scene list, or keep tinkering.' },
 ];
-const ON_EVENT_ONLY = new Set(['st-move-on', 'st-recording', 'st-loop-made', 'st-saved']);
+const ON_EVENT_ONLY = new Set(['st-move-on', 'st-recording', 'st-loop-made', 'st-saved', 'st-popup']);
 
 const KEY_ON = 'vis.tips', KEY_SEEN = 'vis.tipsSeen';
 const SHOW_MS = 14000, GAP_MS = 22000;

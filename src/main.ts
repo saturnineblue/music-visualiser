@@ -520,6 +520,9 @@ setInterval(() => {
     sctx.fillStyle = `hsla(${200 + i * 2}, 80%, ${50 + f.pulse * 20}%, 0.9)`;
     sctx.fillRect(i * w, spec.height - v * spec.height, w - 1, v * spec.height);
   }
+  // Light space colours need dark text over the view (status line, object labels, tool hints).
+  const bg = engine.renderer.scene.background as { r: number; g: number; b: number } | null;
+  document.body.classList.toggle('light-stage', !!bg && 0.2126 * bg.r + 0.7152 * bg.g + 0.0722 * bg.b > 0.3);
   $('#hud-text').textContent =
     `${engine.fps.toFixed(0)} fps · ${engine.scene?.name ?? '—'} · ${engine.logic.logic.name} · ` +
     `${engine.field?.count.toLocaleString() ?? 0} particles · ${f.bpm ? f.bpm + ' bpm' : '— bpm'} · ${online ? 'online' : 'offline'}`;
@@ -597,8 +600,9 @@ function handleKey(e: KeyboardEvent) {
   }
   if (e.key === ' ') { engine.paused = !engine.paused; e.preventDefault(); }
   if (studio.isOpen) {
-    if (e.key === 'm' || e.key === 'M') studio.setMove(!studio.moveMode);
-    if (e.key === 'Escape') studio.setMove(false);
+    if (e.key === 'm' || e.key === 'M') studio.setTool(studio.tool === 'move' ? 'navigate' : 'move');
+    if (e.key === 'n' || e.key === 'N') studio.setTool('navigate');
+    if (e.key === 'Escape') studio.escape();
   } else {
     if (/^[1-9]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) sets.go(+e.key - 1);
     if (e.key === 'PageDown') { sets.next(); e.preventDefault(); }

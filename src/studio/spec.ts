@@ -178,8 +178,10 @@ export interface StudioSpec {
   brightness: number;
   layers: StudioLayer[];
   mappings: StudioMapping[];
-  /** A recorded loop of setting changes, replayed while the scene plays. */
-  loop?: StudioLoop;
+  /** Recorded loops of setting changes. One of them (or none) replays while the scene plays. */
+  loops: StudioLoop[];
+  /** Index into `loops` of the one that plays, or -1 for none. The scene's "loop" param overrides it. */
+  activeLoop: number;
   /** Bumped by the studio UI when colours or structure change (not saved). */
   rev?: number;
 }
@@ -194,7 +196,7 @@ export interface LoopTrack {
   v: Leaf[];
 }
 
-export interface StudioLoop { enabled: boolean; duration: number; tracks: LoopTrack[] }
+export interface StudioLoop { name: string; duration: number; tracks: LoopTrack[] }
 
 /** Where the camera sits, from its angles. */
 export function cameraPosition(c: StudioSpec['camera']): [number, number, number] {
@@ -248,6 +250,8 @@ export function newSpec(name = 'Studio scene'): StudioSpec {
     hueShift: 0,
     brightness: 1,
     layers: [layer],
+    loops: [],
+    activeLoop: -1,
     mappings: [
       { source: { kind: 'feature', name: 'bass' }, target: `layer:${layer.id}.scale`, amount: 0.25, curve: 'square', attack: 0, release: 0.25, enabled: true },
       { source: { kind: 'band', lo: 2500, hi: 12000 }, target: 'brightness', amount: 0.6, curve: 'linear', attack: 0, release: 0.15, enabled: true },
@@ -357,7 +361,7 @@ export function normalizeSpec(raw: unknown): StudioSpec {
       curve: curves.includes(m.curve) ? m.curve : 'linear',
       attack: num(m.attack, 0, 0, 10), release: num(m.release, 0.2, 0, 10), enabled: m.enabled !== false,
     })),
-    ...(cleanLoop(s.loop) ? { loop: cleanLoop(s.loop)! } : {}),
+    ...cleanLoops(s),
   };
 }
 
@@ -378,7 +382,7 @@ function cleanCamera(c: any, d: StudioSpec['camera']): StudioSpec['camera'] {
   };
 }
 
-function cleanLoop(raw: any): StudioLoop | null {
+function cleanLoop(raw: any, fallbackName: string): StudioLoop | null {
   if (!raw || typeof raw !== 'object' || !Array.isArray(raw.tracks)) return null;
   const duration = num(raw.duration, 0, 0, 3600);
   const tracks: LoopTrack[] = raw.tracks.filter((tr: any) =>
@@ -387,7 +391,29 @@ function cleanLoop(raw: any): StudioLoop | null {
     tr.v.every((x: unknown) => ['number', 'string', 'boolean'].includes(typeof x)))
     .map((tr: any) => ({ path: tr.path, t: tr.t, v: tr.v }));
   if (duration <= 0 || !tracks.length) return null;
-  return { enabled: raw.enabled !== false, duration, tracks };
+  return { name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 60) : fallbackName, duration, tracks };
+}
+
+function cleanLoops(s: any): Pick<StudioSpec, 'loops' | 'activeLoop'> {
+  const loops: StudioLoop[] = [];
+  for (const raw of Array.isArray(s.loops) ? s.loops : []) {
+    const l = cleanLoop(raw, `Loop ${loops.length + 1}`);
+    if (l) loops.push(l);
+  }
+  let activeLoop = Math.round(num(s.activeLoop, loops.length ? 0 : -1, -1, loops.length - 1));
+  // Older specs had a single `loop` with an on/off switch.
+  if (!loops.length && s.loop) {
+    const l = cleanLoop(s.loop, 'Loop 1');
+    if (l) { loops.push(l); activeLoop = s.loop.enabled === false ? -1 : 0; }
+  }
+  if (!loops.length) activeLoop = -1;
+  return { loops, activeLoop };
+}
+
+/** The scene param that picks the loop (0 = none), so logics, the Controls panel and sets can switch it. */
+export function loopParam(spec: StudioSpec): Record<string, { value: number; min: number; max: number; step: number; label: string }> | undefined {
+  if (!spec.loops.length) return undefined;
+  return { loop: { value: spec.activeLoop + 1, min: 0, max: spec.loops.length, step: 1, label: 'Loop (0 = none)' } };
 }
 
 // ---------- Live values (what a loop can record and replay) ----------
@@ -444,11 +470,11 @@ export function trackValue(tr: LoopTrack, t: number): Leaf {
   return span > 0 ? a + ((b - a) * (t - tr.t[lo])) / span : b;
 }
 
-/** The spec as it is saved: no editor bookkeeping, and looped settings at the loop's first values. */
+/** The spec as it is saved: no editor bookkeeping, and looped settings at the playing loop's first values. */
 export function canonicalSpec(spec: StudioSpec): StudioSpec {
   const c: StudioSpec = JSON.parse(JSON.stringify(spec));
   delete c.rev;
-  for (const tr of c.loop?.tracks ?? []) if (!tr.path.startsWith('@')) setLive(c, tr.path, tr.v[0]);
+  for (const tr of c.loops[c.activeLoop]?.tracks ?? []) if (!tr.path.startsWith('@')) setLive(c, tr.path, tr.v[0]);
   return c;
 }
 
@@ -511,7 +537,8 @@ const scene = {
   author: 'studio',
   particleCount: ${spec.particleCount},
   models: ${JSON.stringify(specModels(spec))},
-  bloom: ${spec.space.glow},
+  bloom: ${spec.space.glow},${loopParam(clean) ? `
+  params: ${JSON.stringify(loopParam(clean))},` : ''}
   camera: { position: ${JSON.stringify(cameraPosition(cam).map((v) => +v.toFixed(3)))}, target: ${JSON.stringify(cam.target)}, autoRotate: ${cam.autoRotate}, autoTilt: ${cam.autoTilt}, fov: ${cam.fov} },
   studio: spec,
   setup(ctx) { ctx.helpers.studio.setup(ctx, spec); },
