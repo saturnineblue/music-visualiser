@@ -2,6 +2,7 @@ import type { LogicDefinition, SceneDefinition } from '../engine/types';
 import { studioSceneSource, type StudioSpec } from '../studio/spec';
 import { createStudioScene } from '../studio/runtime';
 import { studioStore } from '../studio/store';
+import { cloud } from '../studio/cloud';
 
 /**
  * Talks to the local server (server/plugin.ts). Everything here is localhost-only.
@@ -31,15 +32,39 @@ export const api = {
   async library(): Promise<Library> {
     if (!HOSTED) return fetch('/api/library').then((r) => json<Library>(r));
     const lib = await (await hosted()).staticLibrary();
-    // Scenes made in the studio on this site live in this browser.
-    const mine = studioStore.list().map((s) => ({ id: s.id, name: s.name, description: s.description || 'Made in the Scene Studio.', author: 'studio · this browser' }));
-    return { ...lib, scenes: [...lib.scenes.filter((s) => !mine.some((m) => m.id === s.id)), ...mine] };
+    // Scenes made in the studio on this site: stored on the site (cloud) if it has storage, else in this browser.
+    await cloud.refresh();
+    const mine = [
+      ...cloud.scenes.map((s) => ({ id: s.id, name: s.name, description: s.description || 'Made in the Scene Studio.', author: 'studio · cloud' })),
+      ...studioStore.list().filter((s) => !cloud.hasScene(s.id))
+        .map((s) => ({ id: s.id, name: s.name, description: s.description || 'Made in the Scene Studio.', author: 'studio · this browser' })),
+    ];
+    return {
+      ...lib,
+      scenes: [...lib.scenes.filter((s) => !mine.some((m) => m.id === s.id)), ...mine],
+      models: [...lib.models.filter((m) => !cloud.hasModel(m.id)), ...cloud.models.map((m) => ({ id: m.id, parts: m.parts }))],
+    };
   },
+
+  /** A studio scene saved on the hosted site (cloud first, then this browser), or null. */
+  async hostedSpec(id: string): Promise<StudioSpec | null> {
+    if (cloud.hasScene(id)) return cloud.spec(id);
+    return studioStore.get(id);
+  },
+
+  /** Where a saved studio scene lives, in words. */
+  studioWhere(id: string): string {
+    if (!HOSTED) return `scenes/${id}.ts`;
+    return cloud.hasScene(id) ? 'the site\'s storage' : 'this browser';
+  },
+
+  /** True if .glb models can be added here (always locally; on the hosted site only with storage). */
+  canUploadModels: () => !HOSTED || cloud.enabled,
 
   async loadScene(id: string): Promise<SceneDefinition> {
     let mod: { default: SceneDefinition };
     if (HOSTED) {
-      const mine = studioStore.get(id);
+      const mine = await this.hostedSpec(id);
       if (mine) return createStudioScene(mine);
       mod = await (await hosted()).loadSceneModule(id);
     } else {
@@ -54,13 +79,19 @@ export const api = {
 
   /** URL of models/<id>.glb. `version` busts the cache after the file changes (dev). */
   async modelUrl(id: string, version = 0): Promise<string> {
-    if (HOSTED) return (await hosted()).modelUrl(id);
+    if (HOSTED) return cloud.hasModel(id) ? cloud.modelUrl(id) : (await hosted()).modelUrl(id);
     return `/models/${id}.glb?v=${version}`;
   },
 
-  uploadModel: (file: File) => HOSTED ? notHosted() :
-    fetch(`/api/models?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file })
-      .then((r) => json<{ id: string; replaced: boolean }>(r)),
+  async uploadModel(file: File): Promise<{ id: string; replaced: boolean }> {
+    if (HOSTED) {
+      if (!cloud.enabled) throw new Error('This site has no storage for models. Run the app locally to add them.');
+      const id = file.name.replace(/\.glb$/i, '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'model';
+      return cloud.uploadModel(id, file);
+    }
+    return fetch(`/api/models?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file })
+      .then((r) => json<{ id: string; replaced: boolean }>(r));
+  },
 
   newScene: (name: string) => HOSTED ? notHosted() :
     fetch('/api/scenes/new', { method: 'POST', body: JSON.stringify({ name }) }).then((r) => json<{ id: string }>(r)),
@@ -79,7 +110,7 @@ export const api = {
   /** A library scene's TypeScript source, or null if there is no such scene. */
   async sceneSource(id: string): Promise<string | null> {
     if (HOSTED) {
-      const mine = studioStore.get(id);
+      const mine = await this.hostedSpec(id);
       return mine ? studioSceneSource(mine) : (await hosted()).sceneSource(id);
     }
     const r = await fetch(`/api/scenes/${id}/source`);
@@ -89,7 +120,7 @@ export const api = {
   /** A library scene compiled to plain JS (what scene-set files carry), or null. */
   async sceneCompiled(id: string): Promise<string | null> {
     if (HOSTED) {
-      const mine = studioStore.get(id);
+      const mine = await this.hostedSpec(id);
       return mine ? studioSceneSource(mine) : (await hosted()).sceneCompiled(id); // studio scenes are already plain JS
     }
     const r = await fetch(`/api/scenes/${id}/compiled`);
@@ -114,9 +145,15 @@ export const api = {
    */
   async saveStudio(spec: StudioSpec, overwrite: boolean): Promise<{ id: string; where: string }> {
     if (HOSTED) {
-      if (!overwrite && (studioStore.get(spec.id) || (await (await hosted()).sceneSource(spec.id)) != null)) throw new Error('EXISTS');
-      studioStore.put(spec);
-      return { id: spec.id, where: 'this browser' };
+      const taken = cloud.hasScene(spec.id) || !!studioStore.get(spec.id) || (await (await hosted()).sceneSource(spec.id)) != null;
+      if (!overwrite && taken) throw new Error('EXISTS');
+      if (cloud.enabled) {
+        await cloud.saveSpec(spec, true);
+        studioStore.remove(spec.id); // a browser copy would now only be a stale duplicate
+      } else {
+        studioStore.put(spec);
+      }
+      return { id: spec.id, where: this.studioWhere(spec.id) };
     }
     const r = await fetch('/api/studio', { method: 'POST', body: JSON.stringify({ spec, overwrite }) });
     if (r.status === 409) throw new Error('EXISTS');
@@ -124,6 +161,9 @@ export const api = {
     return { id, where: `scenes/${id}.ts` };
   },
 
-  /** Remove a studio scene kept in this browser (hosted site only). */
-  deleteStudio(id: string) { studioStore.remove(id); },
+  /** Remove a studio scene saved on the hosted site (from its storage and from this browser). */
+  async deleteStudio(id: string) {
+    if (cloud.hasScene(id)) await cloud.removeScene(id);
+    studioStore.remove(id);
+  },
 };

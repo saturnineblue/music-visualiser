@@ -122,6 +122,12 @@ async function refreshLibrary() {
   library = await api.library();
   renderLists();
   studio.libraryChanged();
+  if (HOSTED) {
+    $('#model-drop-hint').hidden = !api.canUploadModels();
+    $('#online-status').innerHTML =
+      `Hosted version: scenes you build in the studio are saved ${api.canUploadModels() ? 'on the site' : 'in this browser'}. To generate scenes or 3D models with Claude, ` +
+      '<a href="https://github.com/saturnineblue/music-visualiser" target="_blank" rel="noopener">run it locally</a>.';
+  }
 }
 
 function renderLists() {
@@ -628,8 +634,9 @@ window.addEventListener('drop', async (e) => {
       const { id, replaced } = await api.uploadModel(file);
       await refreshLibrary();
       showToast(
-        `${replaced ? 'Updated' : 'Added'} model "${id}" (models/${id}.glb).\n\n` +
-        `Use it in a scene with  models: ['${id}']  and  ctx.models['${id}'], or ask Claude for a scene that uses it.`,
+        `${replaced ? 'Updated' : 'Added'} model "${id}"${HOSTED ? '' : ` (models/${id}.glb)`}.\n\n` +
+        (HOSTED ? 'Add it as a layer in the studio ("+ Add layer…").'
+          : `Use it in a scene with  models: ['${id}']  and  ctx.models['${id}'], or ask Claude for a scene that uses it.`),
         false,
       );
     } catch (err) {

@@ -207,6 +207,8 @@ export class Studio {
     const spec = this.spec;
     if (!spec.layers.length) return this.hooks.toast('Add at least one layer before saving.');
     if (this.savedId === null) spec.id = slug(spec.name);
+    // Save what is on screen: the camera may have drifted (auto-rotation) since it was last copied.
+    if (this.hooks.engine.scene?.studio === spec && !this.loopDrivesCamera()) this.syncCameraFromView();
     try {
       let res: { id: string; where: string };
       try {
@@ -222,10 +224,14 @@ export class Studio {
       this.savedJson = this.snapshot();
       await this.hooks.refresh();
       await this.rebuild(); // the running scene takes the saved id and name
+      this.savedJson = this.snapshot(); // restarting nudges the camera angle while it auto-rotates; that isn't an edit
+      this.refreshHead();
       this.hooks.tip('st-saved');
-      this.hooks.toast(`Saved "${spec.name}" to ${res.where}.` + (HOSTED
-        ? '\n\nIt is kept in this browser only. To move it elsewhere or keep it safe, add it to a set and use "Save set…".'
-        : '\n\nIt is now in the scene list, and can be added to sets like any scene.'));
+      this.hooks.toast(`Saved "${spec.name}" to ${res.where}.` + (!HOSTED
+        ? '\n\nIt is now in the scene list, and can be added to sets like any scene.'
+        : res.where === 'this browser'
+          ? '\n\nIt is kept in this browser only. To move it elsewhere or keep it safe, add it to a set and use "Save set…".'
+          : '\n\nIt is stored on the site, so it is there on any device you sign in from.'));
     } catch (e) {
       this.hooks.toast(`Could not save: ${(e as Error).message}`);
     }
@@ -233,8 +239,8 @@ export class Studio {
 
   private async remove() {
     if (!this.savedId) return;
-    if (!(await ask(`Delete "${this.spec.name}" from this browser? This can't be undone.`, { ok: 'Delete', danger: true }))) return;
-    api.deleteStudio(this.savedId);
+    if (!(await ask(`Delete "${this.spec.name}" from ${api.studioWhere(this.savedId)}? This can't be undone.`, { ok: 'Delete', danger: true }))) return;
+    await api.deleteStudio(this.savedId);
     this.savedId = null;
     this.savedJson = this.snapshot();
     await this.hooks.refresh();
@@ -628,7 +634,7 @@ export class Studio {
 
   private refreshHead() {
     const d = this.root.querySelector<HTMLElement>('.st-dirty');
-    if (d) d.textContent = this.dirty ? (this.savedId ? 'Unsaved changes' : 'Not saved yet') : `Saved (${HOSTED ? 'this browser' : `scenes/${this.savedId}.ts`})`;
+    if (d) d.textContent = this.dirty ? (this.savedId ? 'Unsaved changes' : 'Not saved yet') : `Saved (${api.studioWhere(this.savedId ?? '')})`;
     const t = this.root.querySelector<HTMLElement>('.st-title');
     if (t) t.textContent = this.spec.name;
   }
@@ -654,7 +660,7 @@ export class Studio {
         this.text('Name', s, 'name'),
         this.text('Notes', s, 'description'),
         this.slider('Particles', s, 'particleCount', 5000, 150000, 5000, 'build', 'More particles look denser but cost speed. 60,000 is a good start.'),
-        HOSTED && this.savedId ? el('button', { class: 'st-danger', onclick: () => this.remove() }, 'Delete from this browser') : null,
+        HOSTED && this.savedId ? el('button', { class: 'st-danger', onclick: () => this.remove() }, 'Delete this scene') : null,
       ),
       this.loopBlock(),
       this.details('space', 'Space and camera', false,
@@ -724,7 +730,9 @@ export class Studio {
       const prompt = el('textarea', { rows: 2, placeholder: 'Or describe a 3D object for Claude to build in Blender, e.g. "an old oak tree with a swing"' });
       const go = el('button', { disabled: this.generating, onclick: () => this.generate(prompt.value) }, this.generating ? 'Claude is modelling…' : 'Build with Claude + Blender');
       kids.push(prompt, go, el('div', { class: 'log st-log' }));
-      kids.push(el('div', { class: 'hint st-note' }, 'You can also drop a .glb file exported from Blender anywhere on the window.'));
+    }
+    if (api.canUploadModels()) {
+      kids.push(el('div', { class: 'hint st-note' }, 'You can also drop a .glb file exported from Blender anywhere on the window' + (HOSTED ? ' (up to 4 MB here).' : '.')));
     }
     return el('div', { class: 'st-add' }, ...kids);
   }

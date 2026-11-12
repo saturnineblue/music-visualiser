@@ -23,6 +23,12 @@ For VJing with a projector, click **⧉ Open projector window** (Output section)
 vercel env add SITE_PASSWORD production --sensitive --force --scope sergey-fadeevs-projects
 ```
 
+### Storage on the hosted site
+
+The hosted site keeps studio scenes and uploaded `.glb` models in a **private Vercel Blob store** (`music-visualiser-library`), so they are there on any device after signing in. The only way in or out of the store is [`api/cloud.ts`](api/cloud.ts), a Vercel Function behind the site password. Models can be up to 4 MB there (the size limit of a function request); put bigger ones in `models/` and deploy. Without a connected store, the site falls back to saving scenes in the browser.
+
+The store was created with `vercel blob create-store music-visualiser-library --access private --yes`, which also wrote `.env.local` (gitignored) with its credentials. The free Hobby plan includes 1 GB of storage; past its monthly limits Vercel pauses the store until the next period, it doesn't charge.
+
 ### Online mode (optional)
 
 ```bash
@@ -48,6 +54,7 @@ src/engine/        Particle buffers, physics helpers, formations, renderer (Thre
 src/studio/        Scene Studio: scene format, the engine that plays it, and its panel
 src/ui/            Panel, controls (lil-gui), local API client
 server/            Vite plugin: local API (library, save, Claude generation), hot-reload events
+api/cloud.ts       Hosted site only: Vercel Function storing studio scenes and models in Vercel Blob
 ```
 
 Each frame: `audio → features → logic → macros/params → scene.update(ctx) → GPU`.

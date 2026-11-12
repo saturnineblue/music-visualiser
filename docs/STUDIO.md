@@ -20,7 +20,7 @@ Open it with **✦ New in studio** in the Scenes section, or **Edit in studio** 
 - **Mappings**: a source (a frequency range in Hz, or a feature such as bass or beat pulse) drives any setting. The small meter beside each source shows its live level.
 - **Adding models**: pick one from the library, drop a `.glb` on the window, or (local app, Online mode) describe an object for Claude to build in Blender.
 
-**Save scene** writes `scenes/<id>.ts` locally. On the hosted site it saves in the browser instead; to move such a scene elsewhere, add it to a set and use **Save set…**. Logics and the macro sliders still apply on top of a studio scene: `intensity` scales reactions, `chaos` scales turbulence, `speed` scales time, `morph` adds to the morph position, `impulse` scales the beat burst, and `brightness` and `size` work as for any scene. `hue` and `hueSpread` are ignored, because a studio scene sets its own colours.
+**Save scene** writes `scenes/<id>.ts` locally. On the hosted site it saves to the site's storage (a private Vercel Blob store), so the scene is there on any device after signing in; dropped `.glb` models up to 4 MB are stored the same way. If the site has no storage connected, it saves in the browser instead; to move such a scene elsewhere, add it to a set and use **Save set…**. Logics and the macro sliders still apply on top of a studio scene: `intensity` scales reactions, `chaos` scales turbulence, `speed` scales time, `morph` adds to the morph position, `impulse` scales the beat burst, and `brightness` and `size` work as for any scene. `hue` and `hueSpread` are ignored, because a studio scene sets its own colours.
 
 ## File format
 
