@@ -535,7 +535,8 @@ setInterval(() => {
   // Light space colours need dark text over the view (status line, object labels, tool hints).
   const bg = engine.renderer.scene.background as { r: number; g: number; b: number } | null;
   // (Two thresholds, so a background that changes colour around the middle doesn't make the text flicker.)
-  const bgLum = bg ? 0.2126 * bg.r + 0.7152 * bg.g + 0.0722 * bg.b : 0;
+  // The background is stored in linear light; judge it as it looks on screen.
+  const bgLum = bg ? Math.pow(0.2126 * bg.r + 0.7152 * bg.g + 0.0722 * bg.b, 1 / 2.2) : 0;
   const wasLight = document.body.classList.contains('light-stage');
   document.body.classList.toggle('light-stage', wasLight ? bgLum > 0.25 : bgLum > 0.35);
   $('#hud-text').textContent =

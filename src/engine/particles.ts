@@ -12,12 +12,14 @@ const vertexShader = /* glsl */ `
   attribute float alpha;
   uniform float uSize;
   uniform float uPixelRatio;
+  uniform float uSolid;
   varying vec3 vColor;
   varying float vAlpha;
   void main() {
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     gl_Position = projectionMatrix * mv;
-    gl_PointSize = min(size * uSize * uPixelRatio * (48.0 / max(0.1, -mv.z)), 14.0 * uPixelRatio);
+    // Solid dots are drawn a little larger: their dark rim takes up part of each one.
+    gl_PointSize = min(size * uSize * uPixelRatio * (48.0 / max(0.1, -mv.z)) * (1.0 + 0.35 * uSolid), 14.0 * uPixelRatio);
     vColor = color;
     vAlpha = alpha;
   }
@@ -34,8 +36,10 @@ const fragmentShader = /* glsl */ `
     if (d > 0.5) discard;
     if (uSolid > 0.5) {
       // Solid dots: opaque discs that cover what is behind them (for light backgrounds and dark colours).
-      if (d > 0.4 || vAlpha < 0.05) discard;
-      gl_FragColor = vec4(vColor * uBrightness, 1.0);
+      if (d > 0.42 || vAlpha < 0.05) discard;
+      // A dark rim around each dot, so it stands out even on a background of its own colour.
+      float rim = smoothstep(0.24, 0.32, d);
+      gl_FragColor = vec4(mix(vColor * uBrightness, vec3(0.012), rim), 1.0);
       return;
     }
     float a = smoothstep(0.5, 0.0, d);

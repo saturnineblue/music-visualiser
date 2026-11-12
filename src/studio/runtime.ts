@@ -293,7 +293,7 @@ function along(colors: string[], p: number, loop: boolean, out: number[]) {
 
 const bgOut: number[] = [0, 0, 0];
 /**
- * Work out this frame's space colour and set it. Returns the background's typical lightness
+ * Work out this frame's space colour and set it. Returns how light the background can get
  * (what the automatic particle style is judged on).
  */
 function backgroundColor(ctx: SceneContext, spec: StudioSpec, st: StudioState, speedDelta: number): number {
@@ -325,11 +325,15 @@ function backgroundColor(ctx: SceneContext, spec: StudioSpec, st: StudioState, s
       for (let i = 0; i < 3; i++) bgOut[i] = st.bgFrom[i] + (st.bgTo[i] - st.bgFrom[i]) * st.bgFade;
     }
     // Typical lightness: the average of the chosen colours, or the random colours' lightness.
-    typical = ch.mode === 'random' ? ch.lightness
-      : ch.colors.reduce((a, c) => a + lum(hexRgb(c, tmpA)), 0) / ch.colors.length;
+    // The lightest it can get: glowing particles (and bloom) wash out against anything but a dark
+    // background, so one light colour in the set is enough to need solid dots throughout.
+    typical = ch.mode === 'random' ? Math.max(ch.lightness * 1.6, lum(st.bgTo))
+      : ch.colors.reduce((a, c) => Math.max(a, lum(hexRgb(c, tmpA))), 0);
   }
   if (Math.abs(bgOut[0] - st.bgNow[0]) + Math.abs(bgOut[1] - st.bgNow[1]) + Math.abs(bgOut[2] - st.bgNow[2]) > 0.0005) {
-    ctx.setBackground(bgOut[0], bgOut[1], bgOut[2]);
+    // The picked colours are screen (sRGB) colours; the renderer works in linear light and converts
+    // on output. Without this the background comes out far lighter than the colour chosen.
+    ctx.setBackground(Math.pow(bgOut[0], 2.2), Math.pow(bgOut[1], 2.2), Math.pow(bgOut[2], 2.2));
     st.bgNow[0] = bgOut[0]; st.bgNow[1] = bgOut[1]; st.bgNow[2] = bgOut[2];
   }
   return typical;
@@ -420,8 +424,10 @@ export function studioUpdate(ctx: SceneContext, spec: StudioSpec) {
   // Space. (The camera is set when the scene starts and then belongs to the view: the studio keeps the spec in step with it.)
   const bgLum = backgroundColor(ctx, spec, st, D('space.change.speed'));
   // Glowing particles only add light, so they vanish against a light space: draw solid dots there.
-  // (Judged on the background's typical lightness, so a changing colour doesn't flip the style.)
-  const style = spec.space.particles === 'auto' ? (bgLum > 0.3 ? 'solid' : 'glow') : spec.space.particles;
+  // (Judged on the lightest the background gets, so a changing colour doesn't flip the style.)
+  const style = spec.space.particles === 'auto'
+    ? (bgLum > (spec.space.change.mode === 'off' ? 0.3 : 0.12) ? 'solid' : 'glow')
+    : spec.space.particles;
   if (st.style !== style) { st.style = style; ctx.setParticleStyle(style); }
   const solid = style === 'solid';
   // Bloom smears a light background over dark dots: keep it off in solid mode.
