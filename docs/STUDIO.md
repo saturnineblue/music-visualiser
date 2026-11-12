@@ -7,7 +7,10 @@ The studio builds particle scenes without code. A studio scene is **data** (a "s
 Open it with **✦ New in studio** in the Scenes section, or **Edit in studio** when the current scene was made there. The scene plays on the stage while you edit.
 
 - **Scene**: name, notes, particle count.
-- **Space and camera**: space (background) colour, glow, camera distance, height, field of view, auto-rotate.
+- **Audio input** stays at the top of the studio: Mic, File, Demo and Stop, plus the seek bar and play/pause for a file.
+- **✥ Move** (or the **M** key): while it is on, dragging in the view moves a layer instead of the camera. Click a layer to select it (each has a handle with its name), drag to slide it across the view, hold **Shift** while dragging to push it away or pull it closer, and scroll to resize it. Press M or Esc to go back to moving the camera.
+- **Loop recorder**: press **Record**, then change things: sliders, colours, dragging layers, turning the camera, automatic morphing. Press **Stop** and those changes replay as a loop, in the studio and in the saved scene. **Play the loop** pauses it, **Record again** replaces it, **Delete loop** removes it. A recording stops by itself after two minutes.
+- **Space and camera**: space (background) colour and glow. Camera: distance, angle around the scene, angle up/down, field of view, and automatic rotation both around the scene and up and down. The view comes first: drag it to turn the camera, scroll to zoom, right-drag to slide, and the camera settings follow. Changing other settings never moves the camera.
 - **Lighting**: a key light (colour, intensity, direction, height), ambient light, and a fill light from the opposite side. Particles are shaded by the direction of the surface they sit on.
 - **Motion and morphing**: tightness, damping, turbulence, beat burst, overall brightness and colour shift. Morphing steps every few beats, every few seconds, or follows a slider that mappings can drive.
 - **Layers**: each layer takes a share of the particles and shows one **form**: a built-in shape or a 3D model, with its own size, position, rotation and colour (one colour, a gradient, or the model's own colours). Several layers sit side by side.
@@ -32,7 +35,7 @@ const scene = {
   particleCount: 60000,
   models: ["house"],            // every model the spec uses
   bloom: 0.8,
-  camera: { position: [0, 8, 46], target: [0, 0, 0], autoRotate: 0.4, fov: 60 },
+  camera: { position: [0, 8.16, 46.29], target: [0, 0, 0], autoRotate: 0.4, autoTilt: 0, fov: 60 },  // from the spec's camera angles
   studio: spec,                 // lets the studio reopen it
   setup(ctx) { ctx.helpers.studio.setup(ctx, spec); },
   update(ctx) { ctx.helpers.studio.update(ctx, spec); },
@@ -49,7 +52,8 @@ The spec (`StudioSpec` in [`src/studio/spec.ts`](../src/studio/spec.ts), which i
   "id": "my-scene", "name": "My Scene", "description": "",
   "particleCount": 60000,
   "space": { "color": "#020308", "glow": 0.8 },
-  "camera": { "distance": 46, "height": 8, "fov": 60, "autoRotate": 0.4 },
+  "camera": { "distance": 47, "azimuth": 0, "elevation": 10, "fov": 60,   // angles in degrees
+              "autoRotate": 0.4, "autoTilt": 0, "target": [0, 0, 0] },
   "light": { "enabled": true, "color": "#fff2dd", "intensity": 1, "azimuth": 35, "elevation": 40,
              "ambient": 0.45, "fill": "#3050ff", "fillIntensity": 0.25 },
   "motion": { "spring": 6, "damping": 3, "turbulence": 0.6, "burst": 2 },
@@ -76,7 +80,14 @@ The spec (`StudioSpec` in [`src/studio/spec.ts`](../src/studio/spec.ts), which i
   "mappings": [
     { "source": { "kind": "band", "lo": 60, "hi": 120 }, "target": "layer:house1.scale",
       "amount": 0.25, "curve": "square", "attack": 0, "release": 0.25, "enabled": true }
-  ]
+  ],
+  "loop": {                       // optional: recorded setting changes, replayed in a loop
+    "enabled": true, "duration": 8,
+    "tracks": [
+      { "path": "layer:house1.forms.0.position.0", "t": [0, 4, 8], "v": [8, -6, 8] },
+      { "path": "camera.azimuth", "t": [0, 8], "v": [0, 360] }
+    ]
+  }
 }
 ```
 
@@ -86,6 +97,8 @@ Notes:
 - **Sources**: `{ "kind": "feature", "name": … }` with a name from the logic sources (`rms`, `bass`, `lowMid`, `mid`, `high`, `centroid`, `flux`, `pulse`, `beat`, `constant`), or `{ "kind": "band", "lo": Hz, "hi": Hz }` (30 Hz to 16 kHz is analysed).
 - **Spectrum** `axis`: `none`, one of the axes, or `part` (one band per part of the model).
 - **Mapping targets**: `brightness`, `hueShift`, `morph.position`, `motion.turbulence`, `motion.spring`, `space.glow`, `light.intensity`, `light.ambient`, `light.azimuth`, `light.elevation`, and per layer `layer:<id>.scale`, `.lift`, `.spin`, `.size`, `.brightness`, `.explode`, `.spectrum.push`, `.spectrum.glow`. A mapping adds `curve(source) × amount` to its target, smoothed by `attack` and `release` (seconds).
+- **Camera**: `azimuth` 0 looks from the front (+z), 90 from the right; `elevation` is degrees above the horizon. `autoTilt` swings the camera between ±60°. A spec with the older `height` field is converted.
+- **Loop tracks**: `path` is a key of `liveValues(spec)`: any numeric, colour or on/off setting, written as its place in the spec with layers addressed by id (`space.glow`, `light.azimuth`, `layer:<id>.scale`, `layer:<id>.forms.0.color.a`, `mappings.0.amount`). `t` is seconds (ascending, within `duration`) and `v` the values: numbers are interpolated, colours and switches change at their time. The special path `@morph` records the automatic morph position. While a loop plays, it overwrites those settings every frame.
 - Layer `id`s are letters and digits only, and unique within the spec.
 - Missing fields get defaults and out-of-range values are clamped (`normalizeSpec`), so a short hand-written spec is fine.
 

@@ -50,8 +50,6 @@
     </header>
     <div id="online-status" class="hint"></div>
 
-    <section id="studio-section" hidden></section>
-
     <section id="output-section">
       <h2>Output <span class="hint">projector / second screen</span></h2>
       <button id="output-btn" class="accent wide" title="Open a window with only the visuals, for a projector or second screen">⧉ Open projector window</button>
@@ -77,7 +75,7 @@
       <input type="file" id="set-file" accept=".json,application/json" hidden />
     </section>
 
-    <section>
+    <section id="audio-section">
       <h2>Audio input</h2>
       <div class="row">
         <button data-input="mic">Mic</button>
@@ -99,6 +97,8 @@
       <label class="check"><input type="checkbox" id="monitor" checked /> Play file/demo through speakers</label>
       <input type="file" id="file-input" accept="audio/*" hidden />
     </section>
+
+    <section id="studio-section" hidden></section>
 
     <section>
       <h2>Scenes <span class="hint">what the particles form</span></h2>
@@ -146,6 +146,9 @@
     <section>
       <h2>Controls</h2>
       <div id="gui"></div>
+    </section>
+    <section id="help-section">
+      <label class="check" title="Small friendly hints in the bottom-left corner, each shown once"><input type="checkbox" id="tips-toggle" /> Show tips for newcomers</label>
     </section>
   </aside>
 

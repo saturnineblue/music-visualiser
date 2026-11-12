@@ -146,7 +146,7 @@ button.danger { background: var(--err); color: #1a0606; }
 
 /* Scene Studio */
 #panel.studio-open { width: 380px; }
-#panel.studio-open > :not(#studio-section):not(header) { display: none; }
+#panel.studio-open > :not(#studio-section):not(#audio-section):not(header) { display: none; }
 #studio-section { border-top: 0; margin-top: 8px; padding-top: 0; }
 #studio-section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; margin: 16px 0 6px; color: #c5c9d8; }
 #studio-section h3 .hint { text-transform: none; letter-spacing: 0; margin-left: 4px; }
@@ -184,3 +184,29 @@ button.danger { background: var(--err); color: #1a0606; }
 .st-part-head b { flex: 1; }
 .st-part-head input[type='color'] { width: 44px; height: 22px; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: none; }
 button.st-danger { color: var(--err); margin-top: 6px; }
+#panel.studio-open > #audio-section .field, #panel.studio-open > #audio-section #monitor, #panel.studio-open > #audio-section .check { display: none; }
+.st-head button.st-move.active { background: var(--accent); color: #0b0d18; border-color: transparent; }
+.st-selected { color: var(--accent); }
+.st-rec.recording { background: var(--err); color: #fff; border-color: transparent; font-variant-numeric: tabular-nums; }
+
+/* Move tool handles over the view */
+.st-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 3; overflow: hidden; }
+.st-handle { position: absolute; left: 0; top: 0; }
+.st-handle > i { position: absolute; transform: translate(-50%, -50%); border-radius: 50%; border: 2px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.12); }
+.st-handle > span { position: absolute; transform: translateX(-50%); white-space: nowrap; font-size: 11.5px; color: #fff; text-shadow: 0 1px 3px #000; }
+.st-handle.selected > i { border: 1.5px dashed var(--accent); background: none; }
+.st-handle.selected > span { color: var(--accent); font-weight: 600; }
+
+/* First-time tips */
+#tip {
+  position: fixed; left: 14px; bottom: 14px; z-index: 6; max-width: 300px;
+  background: rgba(20, 22, 34, 0.92); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 10px; padding: 10px 12px; backdrop-filter: blur(10px); box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+  animation: tip-in 0.35s ease;
+}
+#tip .tip-text { line-height: 1.45; }
+#tip .tip-row { display: flex; gap: 6px; margin-top: 8px; }
+#tip button { padding: 3px 9px; font-size: 12px; }
+#tip .tip-off { background: none; border-color: transparent; color: var(--muted); }
+@keyframes tip-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+#toast:not([hidden]) ~ #tip { bottom: 240px; }

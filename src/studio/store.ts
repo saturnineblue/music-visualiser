@@ -1,4 +1,4 @@
-import { normalizeSpec, type StudioSpec } from './spec';
+import { canonicalSpec, normalizeSpec, type StudioSpec } from './spec';
 
 /**
  * Studio scenes kept in this browser (localStorage). The hosted site has no server to write
@@ -27,9 +27,7 @@ export const studioStore = {
   /** Throws if the browser's storage is full or blocked. */
   put(spec: StudioSpec) {
     const all = readAll();
-    const clean = { ...spec };
-    delete clean.rev;
-    all[spec.id] = clean;
+    all[spec.id] = canonicalSpec(spec);
     localStorage.setItem(KEY, JSON.stringify(all));
   },
   remove(id: string) {

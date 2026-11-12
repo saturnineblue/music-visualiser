@@ -6,6 +6,7 @@ import { loadPointModel, invalidateModel } from './engine/models';
 import { SetManager, entryMacros, type SetEntry } from './ui/sets';
 import { askText } from './ui/dialog';
 import { Studio } from './studio/ui';
+import { Tips } from './ui/tips';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const store = {
@@ -98,7 +99,15 @@ const studio = new Studio($('#studio-section'), {
     }
   },
   claudeModel: () => $<HTMLSelectElement>('#claude-model').value,
+  tip: (id) => tips.show(id),
 });
+
+// ---------- First-time tips ----------
+const tips = new Tips(() => (studio.isOpen ? 'studio' : 'main'));
+const tipsToggle = $<HTMLInputElement>('#tips-toggle');
+tipsToggle.checked = tips.enabled;
+tipsToggle.onchange = () => tips.setEnabled(tipsToggle.checked);
+tips.onToggle = (on) => { tipsToggle.checked = on; };
 function openStudio(existing?: unknown) {
   beforeStudio = engine.scene?.id ?? '';
   studio.open(existing).then(() => engine.renderer.setInsetRight($('#panel').offsetWidth));
@@ -320,6 +329,7 @@ $<HTMLInputElement>('#monitor').onchange = (e) => audio.setMonitor((e.target as 
 // Start overlay
 document.querySelectorAll<HTMLButtonElement>('[data-start]').forEach((b) => (b.onclick = async () => {
   $('#start').classList.add('hidden');
+  tips.start();
   await audio.init();
   startInput(b.dataset.start!);
 }));
@@ -580,7 +590,10 @@ function handleKey(e: KeyboardEvent) {
     if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen();
   }
   if (e.key === ' ') { engine.paused = !engine.paused; e.preventDefault(); }
-  if (!studio.isOpen) {
+  if (studio.isOpen) {
+    if (e.key === 'm' || e.key === 'M') studio.setMove(!studio.moveMode);
+    if (e.key === 'Escape') studio.setMove(false);
+  } else {
     if (/^[1-9]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) sets.go(+e.key - 1);
     if (e.key === 'PageDown') { sets.next(); e.preventDefault(); }
     if (e.key === 'PageUp') { sets.prev(); e.preventDefault(); }

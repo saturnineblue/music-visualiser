@@ -123,7 +123,19 @@ export interface StudioSpec {
     /** Bloom glow strength, 0..3. */
     glow: number;
   };
-  camera: { distance: number; height: number; fov: number; autoRotate: number };
+  camera: {
+    distance: number;
+    /** Degrees around the scene (0 = in front, 90 = from the right). */
+    azimuth: number;
+    /** Degrees above (+) or below (−) the horizon. */
+    elevation: number;
+    fov: number;
+    /** Automatic rotation around the scene, and up and down (0 = off). */
+    autoRotate: number;
+    autoTilt: number;
+    /** The point the camera looks at. */
+    target: [number, number, number];
+  };
   light: {
     enabled: boolean;
     color: string;
@@ -161,8 +173,32 @@ export interface StudioSpec {
   brightness: number;
   layers: StudioLayer[];
   mappings: StudioMapping[];
+  /** A recorded loop of setting changes, replayed while the scene plays. */
+  loop?: StudioLoop;
   /** Bumped by the studio UI when colours or structure change (not saved). */
   rev?: number;
+}
+
+export type Leaf = number | string | boolean;
+
+/** One setting's recorded values. Numbers are interpolated between keys; other values switch. */
+export interface LoopTrack {
+  /** A key of liveValues(spec), or "@morph" (the automatic morph position). */
+  path: string;
+  t: number[]; // seconds, ascending
+  v: Leaf[];
+}
+
+export interface StudioLoop { enabled: boolean; duration: number; tracks: LoopTrack[] }
+
+/** Where the camera sits, from its angles. */
+export function cameraPosition(c: StudioSpec['camera']): [number, number, number] {
+  const az = (c.azimuth * Math.PI) / 180, el = (c.elevation * Math.PI) / 180;
+  return [
+    c.target[0] + c.distance * Math.sin(az) * Math.cos(el),
+    c.target[1] + c.distance * Math.sin(el),
+    c.target[2] + c.distance * Math.cos(az) * Math.cos(el),
+  ];
 }
 
 export const slug = (s: string) =>
@@ -200,7 +236,7 @@ export function newSpec(name = 'Studio scene'): StudioSpec {
     format: STUDIO_FORMAT, version: 1, id: slug(name), name, description: '',
     particleCount: 60000,
     space: { color: '#020308', glow: 0.8 },
-    camera: { distance: 46, height: 8, fov: 60, autoRotate: 0.4 },
+    camera: { distance: 47, azimuth: 0, elevation: 10, fov: 60, autoRotate: 0.4, autoTilt: 0, target: [0, 0, 0] },
     light: { enabled: true, color: '#fff2dd', intensity: 1, azimuth: 35, elevation: 40, ambient: 0.45, fill: '#3050ff', fillIntensity: 0.25 },
     motion: { spring: 6, damping: 3, turbulence: 0.6, burst: 2 },
     morph: { mode: 'beats', every: 16, blend: 2.5, position: 0 },
@@ -288,10 +324,7 @@ export function normalizeSpec(raw: unknown): StudioSpec {
     description: typeof s.description === 'string' ? s.description : '',
     particleCount: Math.round(num(s.particleCount, d.particleCount, 1000, 300000)),
     space: { color: hex(s.space?.color, d.space.color), glow: num(s.space?.glow, d.space.glow, 0, 3) },
-    camera: {
-      distance: num(s.camera?.distance, d.camera.distance, 5, 200), height: num(s.camera?.height, d.camera.height, -100, 100),
-      fov: num(s.camera?.fov, d.camera.fov, 20, 110), autoRotate: num(s.camera?.autoRotate, d.camera.autoRotate, -10, 10),
-    },
+    camera: cleanCamera(s.camera, d.camera),
     light: {
       enabled: s.light?.enabled !== false,
       color: hex(s.light?.color, d.light.color), intensity: num(s.light?.intensity, d.light.intensity, 0, 5),
@@ -316,7 +349,99 @@ export function normalizeSpec(raw: unknown): StudioSpec {
       curve: curves.includes(m.curve) ? m.curve : 'linear',
       attack: num(m.attack, 0, 0, 10), release: num(m.release, 0.2, 0, 10), enabled: m.enabled !== false,
     })),
+    ...(cleanLoop(s.loop) ? { loop: cleanLoop(s.loop)! } : {}),
   };
+}
+
+function cleanCamera(c: any, d: StudioSpec['camera']): StudioSpec['camera'] {
+  let distance = num(c?.distance, d.distance, 5, 300);
+  let elevation = num(c?.elevation, d.elevation, -89, 89);
+  // Older specs stored a height instead of an angle.
+  if (typeof c?.elevation !== 'number' && typeof c?.height === 'number') {
+    elevation = (Math.atan2(c.height, distance) * 180) / Math.PI;
+    distance = Math.hypot(c.height, distance);
+  }
+  return {
+    distance, elevation,
+    azimuth: num(c?.azimuth, 0, -1e6, 1e6),
+    fov: num(c?.fov, d.fov, 20, 110),
+    autoRotate: num(c?.autoRotate, d.autoRotate, -10, 10), autoTilt: num(c?.autoTilt, 0, -10, 10),
+    target: vec3(c?.target),
+  };
+}
+
+function cleanLoop(raw: any): StudioLoop | null {
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.tracks)) return null;
+  const duration = num(raw.duration, 0, 0, 3600);
+  const tracks: LoopTrack[] = raw.tracks.filter((tr: any) =>
+    tr && typeof tr.path === 'string' && Array.isArray(tr.t) && Array.isArray(tr.v) && tr.t.length === tr.v.length && tr.t.length > 0 &&
+    tr.t.every((x: unknown) => typeof x === 'number' && isFinite(x)) &&
+    tr.v.every((x: unknown) => ['number', 'string', 'boolean'].includes(typeof x)))
+    .map((tr: any) => ({ path: tr.path, t: tr.t, v: tr.v }));
+  if (duration <= 0 || !tracks.length) return null;
+  return { enabled: raw.enabled !== false, duration, tracks };
+}
+
+// ---------- Live values (what a loop can record and replay) ----------
+
+function walk(o: any, prefix: string, skip: readonly string[], out: Record<string, Leaf>) {
+  for (const [k, v] of Object.entries(o ?? {})) {
+    if (skip.includes(k)) continue;
+    if (v !== null && typeof v === 'object') walk(v, `${prefix}${k}.`, skip, out);
+    else if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') out[prefix + k] = v;
+  }
+}
+
+/**
+ * Every setting that can change without rebuilding the scene, by path. Layers are addressed by
+ * id ("layer:<id>.forms.0.position.0"), so a recorded loop survives reordering them.
+ */
+export function liveValues(spec: StudioSpec): Record<string, Leaf> {
+  const out: Record<string, Leaf> = {};
+  for (const k of ['space', 'camera', 'light', 'motion', 'morph'] as const) walk(spec[k], k + '.', [], out);
+  out.hueShift = spec.hueShift;
+  out.brightness = spec.brightness;
+  for (const L of spec.layers) walk(L, `layer:${L.id}.`, ['id', 'name', 'visible', 'share', 'kind', 'shape', 'model'], out);
+  spec.mappings.forEach((m, i) => walk(m, `mappings.${i}.`, ['target'], out));
+  return out;
+}
+
+/** Set one live value by path. Returns true if it changed (false if unchanged or the path is gone). */
+export function setLive(spec: StudioSpec, path: string, value: Leaf): boolean {
+  let node: any = spec;
+  let rest = path;
+  const m = /^layer:([^.]+)\.(.*)$/.exec(path);
+  if (m) {
+    node = spec.layers.find((L) => L.id === m[1]);
+    rest = m[2];
+  }
+  const keys = rest.split('.');
+  for (let i = 0; i < keys.length - 1 && node; i++) node = node[keys[i]];
+  const last = keys[keys.length - 1];
+  if (!node || typeof node !== 'object' || typeof node[last] !== typeof value || node[last] === value) return false;
+  node[last] = value;
+  return true;
+}
+
+/** A loop track's value at time t. */
+export function trackValue(tr: LoopTrack, t: number): Leaf {
+  const n = tr.t.length;
+  if (t <= tr.t[0]) return tr.v[0];
+  if (t >= tr.t[n - 1]) return tr.v[n - 1];
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (tr.t[mid] <= t) lo = mid; else hi = mid; }
+  const a = tr.v[lo], b = tr.v[hi];
+  if (typeof a !== 'number' || typeof b !== 'number') return a;
+  const span = tr.t[hi] - tr.t[lo];
+  return span > 0 ? a + ((b - a) * (t - tr.t[lo])) / span : b;
+}
+
+/** The spec as it is saved: no editor bookkeeping, and looped settings at the loop's first values. */
+export function canonicalSpec(spec: StudioSpec): StudioSpec {
+  const c: StudioSpec = JSON.parse(JSON.stringify(spec));
+  delete c.rev;
+  for (const tr of c.loop?.tracks ?? []) if (!tr.path.startsWith('@')) setLive(c, tr.path, tr.v[0]);
+  return c;
 }
 
 /** Ids of the 3D models a spec needs. */
@@ -363,8 +488,8 @@ export function studioTargets(spec: StudioSpec): StudioTarget[] {
  * @ts-nocheck), so the same text also serves as the compiled module in scene sets.
  */
 export function studioSceneSource(spec: StudioSpec): string {
-  const clean = { ...spec };
-  delete clean.rev;
+  const clean = canonicalSpec(spec);
+  const cam = clean.camera;
   const q = (s: string) => JSON.stringify(s);
   return `// @ts-nocheck
 // Made in the Scene Studio. Open it there ("Edit in studio") to change it: the spec below is
@@ -379,7 +504,7 @@ const scene = {
   particleCount: ${spec.particleCount},
   models: ${JSON.stringify(specModels(spec))},
   bloom: ${spec.space.glow},
-  camera: { position: [0, ${spec.camera.height}, ${spec.camera.distance}], target: [0, 0, 0], autoRotate: ${spec.camera.autoRotate}, fov: ${spec.camera.fov} },
+  camera: { position: ${JSON.stringify(cameraPosition(cam).map((v) => +v.toFixed(3)))}, target: ${JSON.stringify(cam.target)}, autoRotate: ${cam.autoRotate}, autoTilt: ${cam.autoTilt}, fov: ${cam.fov} },
   studio: spec,
   setup(ctx) { ctx.helpers.studio.setup(ctx, spec); },
   update(ctx) { ctx.helpers.studio.update(ctx, spec); },

@@ -76,7 +76,7 @@ Flat typed arrays; particle `i` uses `[i*3, i*3+1, i*3+2]` in xyz/rgb arrays and
 | `helpers` | SceneHelpers | see below |
 | `integrate(opts?)` | fn | spring-to-target + flow field + damping, then moves positions |
 | `colorize(hueOffset?, s?, l?)` | fn | colours all particles from `macros.hue`/`hueSpread`; `hueOffset(i)` returns −0.5..0.5 (default random per particle) |
-| `setCamera(spec)` | fn | `{ position, target, autoRotate, fov }` |
+| `setCamera(spec)` | fn | `{ position, target, autoRotate, autoTilt, fov }` (`autoTilt` swings the camera up and down) |
 | `setBackground(r,g,b)` | fn | 0..1 |
 | `setBloom(strength)` | fn | glow strength 0..3, overriding the scene's `bloom` (e.g. to pulse the glow) |
 

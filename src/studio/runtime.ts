@@ -1,6 +1,6 @@
 import type { AudioFeatures, Curve, PointModel, SceneContext, SceneDefinition } from '../engine/types';
 import { formations } from '../engine/formations';
-import { specModels, type Axis, type StudioForm, type StudioLayer, type StudioSource, type StudioSpec } from './spec';
+import { cameraPosition, setLive, specModels, trackValue, type Axis, type StudioForm, type StudioLayer, type StudioSource, type StudioSpec } from './spec';
 
 /**
  * Plays a StudioSpec (see spec.ts): the engine behind every scene made in the Scene Studio.
@@ -33,9 +33,13 @@ interface FormData {
   s: number; ox: number; oy: number; oz: number;
 }
 
-interface LayerData { id: string; start: number; n: number; forms: FormData[]; spin: number }
+export interface LayerData {
+  id: string; start: number; n: number; forms: FormData[]; spin: number;
+  /** Where the layer is right now (centre and half-size), for picking it in the view. */
+  cx: number; cy: number; cz: number; cr: number;
+}
 
-interface State {
+export interface StudioState {
   rev: number | undefined;
   sig: string;
   layers: LayerData[];
@@ -43,7 +47,10 @@ interface State {
   env: number[];
   delta: Record<string, number>;
   stage: number; t: number; timer: number; moving: boolean;
-  camSig: string; bg: string; glow: number;
+  bg: string; glow: number;
+  loopT: number;
+  /** The automatic morph position (stage + progress), so a loop recording can capture it. */
+  morphS: number; maxForms: number;
   r1: Float32Array; r2: Float32Array;
 }
 
@@ -196,7 +203,7 @@ function paintForm(fd: FormData, F: StudioForm, L: StudioLayer, n: number, start
 }
 
 /** Bring the built geometry and colours in line with the spec. */
-function sync(ctx: SceneContext, spec: StudioSpec, st: State) {
+function sync(ctx: SceneContext, spec: StudioSpec, st: StudioState) {
   const visible = spec.layers.filter((L) => L.visible && L.forms.length);
   const sig = JSON.stringify([ctx.count, Object.keys(ctx.models), visible.map((L) => [L.id, L.share, L.forms.map((F) => [F.kind, F.shape, F.model])])]);
   if (sig !== st.sig) {
@@ -205,7 +212,7 @@ function sync(ctx: SceneContext, spec: StudioSpec, st: State) {
     let start = 0;
     st.layers = visible.map((L, i) => {
       const n = i === visible.length - 1 ? ctx.count - start : Math.min(ctx.count - start, Math.round((ctx.count * Math.max(0.0001, L.share)) / total));
-      const ld: LayerData = { id: L.id, start, n, forms: L.forms.map((F) => buildForm(F, n, ctx.models)), spin: prev.get(L.id) ?? 0 };
+      const ld: LayerData = { id: L.id, start, n, forms: L.forms.map((F) => buildForm(F, n, ctx.models)), spin: prev.get(L.id) ?? 0, cx: 0, cy: 0, cz: 0, cr: 1 };
       start += n;
       return ld;
     });
@@ -256,9 +263,9 @@ const hue = new Float32Array(9);
 export function studioSetup(ctx: SceneContext, spec: StudioSpec) {
   const r1 = new Float32Array(ctx.count), r2 = new Float32Array(ctx.count);
   for (let i = 0; i < ctx.count; i++) { r1[i] = ctx.helpers.rand(i, 11); r2[i] = ctx.helpers.rand(i, 23); }
-  const st: State = {
+  const st: StudioState = {
     rev: undefined, sig: '', layers: [], used: 0, env: [], delta: {},
-    stage: 0, t: 0, timer: 0, moving: false, camSig: '', bg: '', glow: -1, r1, r2,
+    stage: 0, t: 0, timer: 0, moving: false, bg: '', glow: -1, loopT: 0, morphS: 0, maxForms: 1, r1, r2,
   };
   ctx.state.studio = st;
   ctx.alphas.fill(1);
@@ -266,8 +273,26 @@ export function studioSetup(ctx: SceneContext, spec: StudioSpec) {
 }
 
 export function studioUpdate(ctx: SceneContext, spec: StudioSpec) {
-  let st = ctx.state.studio as State | undefined;
-  if (!st) { studioSetup(ctx, spec); st = ctx.state.studio as State; }
+  let st = ctx.state.studio as StudioState | undefined;
+  if (!st) { studioSetup(ctx, spec); st = ctx.state.studio as StudioState; }
+
+  // Recorded loop: write its values into the spec, so everything below (and the studio's sliders) follows it.
+  let morphFromLoop: number | undefined;
+  const loop = spec.loop;
+  if (loop && loop.enabled && loop.duration > 0) {
+    st.loopT = (st.loopT + ctx.dt) % loop.duration;
+    let cam = false, repaint = false;
+    for (const tr of loop.tracks) {
+      const v = trackValue(tr, st.loopT);
+      if (tr.path === '@morph') { if (typeof v === 'number') morphFromLoop = v; continue; }
+      const changed = setLive(spec, tr.path, v);
+      if (tr.path.startsWith('camera.')) cam = true;
+      // Colours and part reactions are baked per particle: repaint when one changes.
+      else if (changed && (typeof v !== 'number' || tr.path.includes('.parts.')) && tr.path.startsWith('layer:')) repaint = true;
+    }
+    if (repaint) spec.rev = (spec.rev ?? 0) + 1;
+    if (cam) ctx.setCamera({ position: cameraPosition(spec.camera), target: spec.camera.target, fov: spec.camera.fov });
+  }
   if (st.rev !== spec.rev) sync(ctx, spec, st);
 
   const { audio, macros, targets, velocities, colors, sizes, alphas, dt, sdt } = ctx;
@@ -287,15 +312,10 @@ export function studioUpdate(ctx: SceneContext, spec: StudioSpec) {
   });
   const D = (k: string) => d[k] ?? 0;
 
-  // Space and camera (only touched when they change, so orbiting with the mouse still works).
+  // Space. (The camera is set when the scene starts and then belongs to the view: the studio keeps the spec in step with it.)
   if (st.bg !== spec.space.color) { st.bg = spec.space.color; const c = hexRgb(st.bg, tmpA); ctx.setBackground(c[0], c[1], c[2]); }
   const glow = Math.max(0, spec.space.glow + D('space.glow'));
   if (Math.abs(glow - st.glow) > 0.005) { st.glow = glow; ctx.setBloom(glow); }
-  const cam = spec.camera, camSig = `${cam.distance},${cam.height},${cam.fov},${cam.autoRotate}`;
-  if (st.camSig !== camSig) {
-    if (st.camSig) ctx.setCamera({ position: [0, cam.height, cam.distance], target: [0, 0, 0], fov: cam.fov, autoRotate: cam.autoRotate });
-    st.camSig = camSig;
-  }
 
   // Light.
   const lit = spec.light.enabled;
@@ -316,6 +336,7 @@ export function studioUpdate(ctx: SceneContext, spec: StudioSpec) {
 
   // Morph: which two forms each layer is between, and how far.
   const maxForms = st.layers.reduce((mx, l) => Math.max(mx, l.forms.length), 1);
+  st.maxForms = maxForms;
   const extra = D('morph.position') + macros.morph;
   let stage = 0, t = 0;
   const manual = spec.morph.mode === 'manual';
@@ -324,13 +345,18 @@ export function studioUpdate(ctx: SceneContext, spec: StudioSpec) {
     if (manual) {
       s = Math.min(1, Math.max(0, spec.morph.position + extra)) * (maxForms - 1);
     } else {
-      if (spec.morph.mode === 'time') st.timer += sdt; else if (audio.beat) st.timer += 1;
-      if (!st.moving && st.timer >= spec.morph.every) st.moving = true;
-      if (st.moving) {
-        st.t += dt / Math.max(0.05, spec.morph.blend);
-        if (st.t >= 1) { st.stage++; st.t = 0; st.moving = false; st.timer = 0; }
+      if (morphFromLoop !== undefined) {
+        st.morphS = morphFromLoop;
+      } else {
+        if (spec.morph.mode === 'time') st.timer += sdt; else if (audio.beat) st.timer += 1;
+        if (!st.moving && st.timer >= spec.morph.every) st.moving = true;
+        if (st.moving) {
+          st.t += dt / Math.max(0.05, spec.morph.blend);
+          if (st.t >= 1) { st.stage++; st.t = 0; st.moving = false; st.timer = 0; }
+        }
+        st.morphS = st.stage + st.t;
       }
-      s = st.stage + st.t + Math.min(1, Math.max(-1, extra)) * (maxForms - 1);
+      s = st.morphS + Math.min(1, Math.max(-1, extra)) * (maxForms - 1);
     }
     stage = Math.floor(s); t = s - stage;
   }
@@ -367,6 +393,7 @@ export function studioUpdate(ctx: SceneContext, spec: StudioSpec) {
       }
     }
     const A = ld.forms[a], B = ld.forms[b];
+    ld.cx = A.ox + (B.ox - A.ox) * w; ld.cy = A.oy + (B.oy - A.oy) * w; ld.cz = A.oz + (B.oz - A.oz) * w; ld.cr = A.s + (B.s - A.s) * w;
 
     const sp = L.spectrum, useSpec = sp.axis !== 'none';
     const sb0 = hzToBand(sp.lo), sbN = Math.max(0, hzToBand(sp.hi) - sb0);
@@ -448,7 +475,7 @@ export function createStudioScene(spec: StudioSpec): SceneDefinition {
     particleCount: spec.particleCount,
     models: specModels(spec),
     bloom: spec.space.glow,
-    camera: { position: [0, spec.camera.height, spec.camera.distance], target: [0, 0, 0], autoRotate: spec.camera.autoRotate, fov: spec.camera.fov },
+    camera: { position: cameraPosition(spec.camera), target: [...spec.camera.target], autoRotate: spec.camera.autoRotate, autoTilt: spec.camera.autoTilt, fov: spec.camera.fov },
     studio: spec,
     setup: (ctx) => studioSetup(ctx, spec),
     update: (ctx) => studioUpdate(ctx, spec),

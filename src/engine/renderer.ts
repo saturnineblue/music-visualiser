@@ -146,12 +146,49 @@ export class Renderer {
     this.controls.enableDamping = true;
     this.controls.autoRotate = true;
     this.controls.autoRotateSpeed = 0.4;
+    this.controls.addEventListener('start', () => { this.interacting = true; });
+    this.controls.addEventListener('end', () => { this.interacting = false; });
 
     window.addEventListener('resize', () => this.resize());
     window.addEventListener('pagehide', () => this.output?.win.close());
   }
 
   private insetRight = 0;
+
+  /** Automatic up-and-down swing of the camera, in OrbitControls auto-rotate units (0 = off). */
+  autoTilt = 0;
+  private tiltDir = 1;
+  private lastRender = performance.now();
+  /** True while the user is dragging / zooming the view. */
+  interacting = false;
+
+  /** The camera as orbit angles (degrees) around its target. */
+  getOrbit(): { azimuth: number; elevation: number; distance: number; target: [number, number, number] } {
+    const t = this.controls.target, p = this.camera.position;
+    const dx = p.x - t.x, dy = p.y - t.y, dz = p.z - t.z;
+    const distance = Math.hypot(dx, dy, dz) || 1;
+    return {
+      azimuth: (Math.atan2(dx, dz) * 180) / Math.PI,
+      elevation: (Math.asin(Math.max(-1, Math.min(1, dy / distance))) * 180) / Math.PI,
+      distance,
+      target: [t.x, t.y, t.z],
+    };
+  }
+
+  /** Swing the camera up and down between ±60° while auto-tilt is on. */
+  private tilt(dt: number) {
+    if (!this.autoTilt || this.interacting) return;
+    const o = this.getOrbit();
+    let el = o.elevation + this.tiltDir * this.autoTilt * 6 * dt; // same speed scale as auto-rotate
+    if (el > 60) { el = 60; this.tiltDir = -Math.sign(this.autoTilt); }
+    if (el < -60) { el = -60; this.tiltDir = Math.sign(this.autoTilt); }
+    const az = (o.azimuth * Math.PI) / 180, e = (el * Math.PI) / 180;
+    this.camera.position.set(
+      o.target[0] + o.distance * Math.sin(az) * Math.cos(e),
+      o.target[1] + o.distance * Math.sin(e),
+      o.target[2] + o.distance * Math.cos(az) * Math.cos(e),
+    );
+  }
 
   /** Keep the visual centred in the area not covered by the side panel. */
   setInsetRight(px: number) {
@@ -177,6 +214,7 @@ export class Renderer {
       this.controls.autoRotate = spec.autoRotate !== 0;
       this.controls.autoRotateSpeed = spec.autoRotate;
     }
+    if (spec.autoTilt !== undefined) this.autoTilt = spec.autoTilt;
   }
 
   setBackground(r: number, g: number, b: number) {
@@ -240,6 +278,9 @@ export class Renderer {
   }
 
   render() {
+    const now = performance.now();
+    this.tilt(Math.min(0.1, (now - this.lastRender) / 1000));
+    this.lastRender = now;
     this.controls.update();
     const out = this.output;
     if (out) {

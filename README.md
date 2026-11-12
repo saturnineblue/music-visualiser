@@ -9,7 +9,7 @@ npm install
 npm run dev        # http://127.0.0.1:5173
 ```
 
-Pick an input: Microphone / line-in, Audio file, or **Demo beat** (a built-in synth loop, handy for testing). Keys: **H** hides the panel, **F** toggles fullscreen, **Space** pauses.
+Pick an input: Microphone / line-in, Audio file, or **Demo beat** (a built-in synth loop, handy for testing). Keys: **H** hides the panel, **F** toggles fullscreen, **Space** pauses. Newcomers get small one-time tips in the bottom-left corner; switch them off in the bubble or with **Show tips for newcomers** at the bottom of the panel.
 
 For VJing with a projector, click **⧉ Open projector window** (Output section). It opens a second window with only the visuals: drag it to the projector and press **F** or double-click it for fullscreen, and keep the controls on your main screen. Keep the main window visible, since it drives both (browsers slow down hidden windows). In Chrome/Edge, if you allow window management, the window moves to the other screen by itself. Untick **Show preview here** to save GPU time.
 
@@ -60,7 +60,7 @@ Each frame: `audio → features → logic → macros/params → scene.update(ctx
 
 - **In the app:** `+ Blank scene` creates `scenes/<name>.ts` from the template. `+ Mapping` and `Save logic as…` let you build logics by hand.
 - **With Claude in the app (Online):** choose New scene, Change current scene, New logic, or Change current logic, then describe what you want. You can also send Claude a summary of what's playing.
-- **Scene Studio:** `✦ New in studio` (Scenes section) builds a scene without code. Add layers of shapes and 3D models side by side, let a layer morph between several forms, and set colours, lighting, the space colour, glow and camera. Map any frequency range or audio feature to any setting, spread the spectrum across a shape, and give each part of a model its own colour and reaction. It plays live while you edit. Saved scenes are ordinary `scenes/<id>.ts` files (on the hosted site they are kept in the browser) and reopen with `Edit in studio`. Details: `docs/STUDIO.md`.
+- **Scene Studio:** `✦ New in studio` (Scenes section) builds a scene without code. Add layers of shapes and 3D models side by side, let a layer morph between several forms, and set colours, lighting, the space colour, glow and camera. Map any frequency range or audio feature to any setting, spread the spectrum across a shape, and give each part of a model its own colour and reaction. It plays live while you edit. You can drag layers around in the view (`✥ Move`), frame the shot by dragging the view (the camera settings follow), and record your changes as a loop that the scene replays. Saved scenes are ordinary `scenes/<id>.ts` files (on the hosted site they are kept in the browser) and reopen with `Edit in studio`. Details: `docs/STUDIO.md`.
 - **3D objects:** drop a `.glb` onto the app (or export one from Blender into `models/`). Name the parts in Blender (`roof`, `windows`…) and scenes can animate each one separately. See *Dream House* and the Models section of `docs/SCENE_API.md`.
 - **With Claude Code / any editor:** edit files in `scenes/` or `logics/`. The running app hot-reloads them without restarting the audio.
 

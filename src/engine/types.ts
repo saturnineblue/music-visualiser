@@ -190,6 +190,8 @@ export interface CameraSpec {
   target?: [number, number, number];
   /** Auto-rotate speed (0 = off). */
   autoRotate?: number;
+  /** Automatic up-and-down swing of the camera (0 = off). */
+  autoTilt?: number;
   fov?: number;
 }
 

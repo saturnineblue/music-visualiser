@@ -86,7 +86,7 @@ export class Engine {
     this.logic.setSceneParams(def.params);
     this.renderer.setBackground(0.008, 0.008, 0.02);
     this.renderer.setBloom(def.bloom ?? 0.7);
-    this.renderer.setCamera({ position: [0, 8, 50], target: [0, 0, 0], autoRotate: 0.4, fov: 60, ...def.camera });
+    this.renderer.setCamera({ position: [0, 8, 50], target: [0, 0, 0], autoRotate: 0.4, autoTilt: 0, fov: 60, ...def.camera });
     this.time = 0;
     this.frame = 0;
 

@@ -1,11 +1,12 @@
+import * as THREE from 'three';
 import type { Engine } from '../engine/engine';
 import { AUDIO_SOURCES, CURVES, type AudioSource, type SceneDefinition } from '../engine/types';
 import { api, HOSTED, type ModelItem } from '../ui/api';
 import { ask } from '../ui/dialog';
-import { createStudioScene, sourceValue } from './runtime';
+import { createStudioScene, sourceValue, type LayerData, type StudioState } from './runtime';
 import {
-  AXES, SHAPES, newForm, newLayer, newSpec, normalizeSpec, slug, specModels, studioTargets,
-  type StudioForm, type StudioLayer, type StudioMapping, type StudioPart, type StudioSource, type StudioSpec,
+  AXES, SHAPES, cameraPosition, canonicalSpec, liveValues, newForm, newLayer, newSpec, normalizeSpec, slug, specModels, studioTargets,
+  type Leaf, type StudioForm, type StudioLayer, type StudioMapping, type StudioPart, type StudioSource, type StudioSpec,
 } from './spec';
 
 /**
@@ -30,7 +31,20 @@ export interface StudioHooks {
   /** Null if Claude + Blender generation can run now, otherwise why not. */
   cannotGenerate(): Promise<string | null>;
   claudeModel(): string;
+  /** Offer a first-time tip (shown once, if tips are on). */
+  tip(id: string): void;
 }
+
+/** A loop being recorded: per setting, its keys so far. */
+interface Recording {
+  start: number;
+  prevT: number;
+  last: Record<string, Leaf>;
+  tracks: Map<string, { t: number[]; v: Leaf[] }>;
+}
+const MAX_LOOP_SECONDS = 120;
+const fmtClock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const wrap180 = (a: number) => ((((a + 180) % 360) + 360) % 360) - 180;
 
 /** live: read each frame, nothing to do. paint: recolour. build: geometry or models changed. */
 type Change = 'live' | 'paint' | 'build';
@@ -72,9 +86,40 @@ export class Studio {
   private generating = false;
   private log: { text: string; image?: string }[] = [];
   private applying: Promise<unknown> = Promise.resolve();
+  /** Re-read values into the inputs on screen (after the view, a drag or a loop changed them). */
+  private refreshers: (() => void)[] = [];
+  private rec: Recording | null = null;
+  private recTimer = 0;
+  /** Move tool: drag layers in the view instead of the camera. */
+  moveMode = false;
+  private selected: string | null = null;
+  private drag: { id: string; x: number; y: number } | null = null;
+  private overlay = el('div', { class: 'st-overlay', hidden: true });
+  private handles = new Map<string, HTMLElement>();
+  private settleUntil = 0;
 
   constructor(private root: HTMLElement, private hooks: StudioHooks) {
-    setInterval(() => this.refreshMeters(), 70);
+    setInterval(() => {
+      if (!this.isOpen) return;
+      this.refreshMeters();
+      if (this.spec.loop?.enabled || this.drag) this.refreshValues();
+      this.refreshRecorder();
+    }, 70);
+    document.body.append(this.overlay);
+    const r = hooks.engine.renderer;
+    // The view has priority: when the user moves the camera, the camera settings follow.
+    r.controls.addEventListener('change', () => {
+      if (this.isOpen && (r.interacting || performance.now() < this.settleUntil)) this.syncCameraFromView();
+    });
+    r.controls.addEventListener('end', () => { if (this.isOpen) { this.settleUntil = performance.now() + 1200; this.syncCameraFromView(); } });
+    const canvas = r.renderer.domElement;
+    canvas.addEventListener('pointerdown', (e) => this.onPointerDown(e));
+    canvas.addEventListener('pointermove', (e) => this.onPointerMove(e));
+    canvas.addEventListener('pointerup', () => this.onPointerUp());
+    canvas.addEventListener('pointercancel', () => this.onPointerUp());
+    canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
+    const frame = () => { requestAnimationFrame(frame); if (this.isOpen) this.updateOverlay(); };
+    requestAnimationFrame(frame);
     if (import.meta.hot) {
       import.meta.hot.on('vis:claude-progress', (p: { text: string; image?: string }) => {
         if (!this.generating) return;
@@ -88,7 +133,7 @@ export class Studio {
   owns(id: string) { return this.isOpen && (this.spec.id === id || this.savedId === id); }
 
   get dirty() { return this.snapshot() !== this.savedJson; }
-  private snapshot() { const c = { ...this.spec }; delete c.rev; return JSON.stringify(c); }
+  private snapshot() { return JSON.stringify(canonicalSpec(this.spec)); }
 
   /** Open with an existing studio spec, or a fresh scene. */
   async open(existing?: unknown) {
@@ -109,12 +154,17 @@ export class Studio {
     this.log = [];
     this.root.hidden = false;
     this.root.parentElement?.classList.add('studio-open');
+    this.selected = null;
+    this.rec = null;
     this.render();
-    await this.rebuild();
+    await this.rebuild(false);
+    this.hooks.tip('st-welcome');
   }
 
   private async close() {
     if (this.dirty && !(await ask(`"${this.spec.name}" has unsaved changes.\n\nLeave the studio without saving them?`, { ok: 'Discard changes', danger: true }))) return;
+    if (this.rec) this.stopRecording(false);
+    this.setMove(false);
     this.isOpen = false;
     this.root.hidden = true;
     this.root.parentElement?.classList.remove('studio-open');
@@ -129,9 +179,11 @@ export class Studio {
   // ---------- Applying changes ----------
 
   /** Re-run the scene on the stage: needed when models, layers or the particle count change. */
-  private rebuild() {
+  private rebuild(keepView = true) {
     this.applying = this.applying.then(async () => {
       if (!this.isOpen) return;
+      // Restarting the scene resets the camera to the spec: take the current view first, so nothing jumps.
+      if (keepView && this.hooks.engine.scene?.studio === this.spec && !this.loopDrivesCamera()) this.syncCameraFromView();
       await this.hooks.run(createStudioScene(this.spec));
       if (this.isOpen) this.render(); // part names are known once models have loaded
     });
@@ -170,6 +222,7 @@ export class Studio {
       this.savedJson = this.snapshot();
       await this.hooks.refresh();
       await this.rebuild(); // the running scene takes the saved id and name
+      this.hooks.tip('st-saved');
       this.hooks.toast(`Saved "${spec.name}" to ${res.where}.` + (HOSTED
         ? '\n\nIt is kept in this browser only. To move it elsewhere or keep it safe, add it to a set and use "Save set…".'
         : '\n\nIt is now in the scene list, and can be added to sets like any scene.'));
@@ -210,6 +263,241 @@ export class Studio {
     this.changed('build', true);
   }
 
+  // ---------- Camera: the view comes first ----------
+
+  private refreshValues() { for (const f of this.refreshers) f(); }
+
+  private loopDrivesCamera() {
+    return !!this.spec.loop?.enabled && this.spec.loop.tracks.some((t) => t.path.startsWith('camera.'));
+  }
+
+  /** Point the real camera where the camera settings say (after a slider changed). */
+  private applyCamera() {
+    const c = this.spec.camera;
+    this.hooks.engine.renderer.setCamera({ position: cameraPosition(c), target: [...c.target], fov: c.fov, autoRotate: c.autoRotate, autoTilt: c.autoTilt });
+  }
+
+  /** Copy the view's camera into the settings (after the user moved it, or before a rebuild). */
+  private syncCameraFromView() {
+    const o = this.hooks.engine.renderer.getOrbit(), c = this.spec.camera;
+    let az = o.azimuth;
+    while (az - c.azimuth > 180) az -= 360;
+    while (az - c.azimuth < -180) az += 360;
+    c.azimuth = +az.toFixed(2);
+    c.elevation = +o.elevation.toFixed(2);
+    c.distance = +o.distance.toFixed(2);
+    c.target = o.target.map((v) => +v.toFixed(2)) as [number, number, number];
+    this.refreshValues();
+    this.refreshHead();
+  }
+
+  // ---------- Move tool: select and drag layers in the view ----------
+
+  setMove(on: boolean) {
+    if (on === this.moveMode) return;
+    this.moveMode = on;
+    const r = this.hooks.engine.renderer;
+    r.controls.enabled = !on;
+    r.renderer.domElement.style.cursor = on ? 'move' : '';
+    this.overlay.hidden = !on;
+    this.overlay.style.right = `${this.root.parentElement?.offsetWidth ?? 0}px`; // keep handles off the panel
+    if (!on) { this.drag = null; this.selected = null; }
+    if (this.isOpen) this.render();
+    if (on) this.hooks.tip('st-move-on');
+  }
+
+  private runtimeLayers(): LayerData[] {
+    return (this.hooks.engine.field?.ctx.state.studio as StudioState | undefined)?.layers ?? [];
+  }
+
+  /** Where a layer's centre is on screen, how big it looks, and how far away it is. */
+  private project(ld: LayerData) {
+    const r = this.hooks.engine.renderer, cam = r.camera;
+    const rect = r.renderer.domElement.getBoundingClientRect();
+    const c = new THREE.Vector3(ld.cx, ld.cy, ld.cz);
+    const depth = c.clone().sub(cam.position).dot(cam.getWorldDirection(new THREE.Vector3()));
+    const ndc = c.clone().project(cam);
+    const perPx = (2 * Math.max(0.01, depth) * Math.tan((cam.fov * Math.PI) / 360)) / rect.height; // world units per pixel there
+    return { x: rect.left + ((ndc.x + 1) / 2) * rect.width, y: rect.top + ((1 - ndc.y) / 2) * rect.height, radius: ld.cr / perPx, depth, perPx };
+  }
+
+  private pick(x: number, y: number): string | null {
+    let best: string | null = null, bestScore = Infinity;
+    for (const ld of this.runtimeLayers()) {
+      const p = this.project(ld);
+      if (p.depth <= 0) continue;
+      const reach = Math.max(28, p.radius);
+      const score = Math.hypot(x - p.x, y - p.y) / reach;
+      if (score <= 1 && score < bestScore) { best = ld.id; bestScore = score; }
+    }
+    return best;
+  }
+
+  private onPointerDown(e: PointerEvent) {
+    if (!this.isOpen || !this.moveMode || e.button !== 0) return;
+    const id = this.pick(e.clientX, e.clientY);
+    const was = this.selected;
+    this.selected = id;
+    if (id) {
+      this.drag = { id, x: e.clientX, y: e.clientY };
+      (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+      this.open_.set('layer:' + id, true);
+    }
+    if (id !== was) this.render();
+    e.preventDefault();
+  }
+
+  private onPointerMove(e: PointerEvent) {
+    const d = this.drag;
+    if (!d || !this.isOpen) return;
+    const L = this.spec.layers.find((x) => x.id === d.id), ld = this.runtimeLayers().find((x) => x.id === d.id);
+    if (!L || !ld) return;
+    const dx = e.clientX - d.x, dy = e.clientY - d.y;
+    d.x = e.clientX; d.y = e.clientY;
+    const cam = this.hooks.engine.renderer.camera, k = this.project(ld).perPx;
+    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0), up = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
+    // Shift: push the layer away from / towards the camera instead of across the view.
+    const move = e.shiftKey
+      ? cam.getWorldDirection(new THREE.Vector3()).multiplyScalar(-dy * k)
+      : right.multiplyScalar(dx * k).add(up.multiplyScalar(-dy * k));
+    for (const F of L.forms) {
+      F.position[0] = +(F.position[0] + move.x).toFixed(3);
+      F.position[1] = +(F.position[1] + move.y).toFixed(3);
+      F.position[2] = +(F.position[2] + move.z).toFixed(3);
+    }
+    this.refreshHead();
+  }
+
+  private onPointerUp() {
+    if (!this.drag) return;
+    this.drag = null;
+    this.refreshValues();
+  }
+
+  private onWheel(e: WheelEvent) {
+    if (!this.isOpen || !this.moveMode) return;
+    e.preventDefault();
+    const L = this.spec.layers.find((x) => x.id === this.selected);
+    if (!L) return;
+    L.scale = +Math.min(4, Math.max(0.1, L.scale * Math.exp(-e.deltaY * 0.0015))).toFixed(3);
+    this.refreshValues();
+    this.refreshHead();
+  }
+
+  /** Handles drawn over the view in move mode: one per layer, the selected one ringed. */
+  private updateOverlay() {
+    if (!this.moveMode) return;
+    const seen = new Set<string>();
+    for (const ld of this.runtimeLayers()) {
+      const L = this.spec.layers.find((x) => x.id === ld.id);
+      if (!L) continue;
+      seen.add(ld.id);
+      let h = this.handles.get(ld.id);
+      if (!h) { h = el('div', { class: 'st-handle' }, el('i'), el('span')); this.handles.set(ld.id, h); this.overlay.append(h); }
+      const p = this.project(ld), sel = ld.id === this.selected;
+      h.hidden = p.depth <= 0;
+      h.classList.toggle('selected', sel);
+      h.style.transform = `translate(${p.x}px, ${p.y}px)`;
+      const size = sel ? Math.min(900, Math.max(40, p.radius * 2)) : 14;
+      const ring = h.firstElementChild as HTMLElement;
+      ring.style.width = ring.style.height = `${size}px`;
+      (h.lastElementChild as HTMLElement).textContent = L.name;
+      (h.lastElementChild as HTMLElement).style.top = `${size / 2 + 4}px`;
+    }
+    for (const [id, h] of this.handles) if (!seen.has(id)) { h.remove(); this.handles.delete(id); }
+  }
+
+  // ---------- Loop recorder ----------
+
+  private sampleValues(): Record<string, Leaf> {
+    const vals = liveValues(this.spec);
+    const st = this.hooks.engine.field?.ctx.state.studio as StudioState | undefined;
+    if (st && st.maxForms > 1 && this.spec.morph.mode !== 'manual') vals['@morph'] = +st.morphS.toFixed(4);
+    return vals;
+  }
+
+  private startRecording() {
+    if (this.spec.loop) this.spec.loop.enabled = false; // the old loop must not fight what is being recorded
+    this.rec = { start: performance.now(), prevT: 0, last: this.sampleValues(), tracks: new Map() };
+    this.recTimer = window.setInterval(() => this.recordSample(), 33);
+    this.render();
+    this.hooks.tip('st-recording');
+  }
+
+  private recordSample() {
+    const rec = this.rec;
+    if (!rec) return;
+    const t = (performance.now() - rec.start) / 1000;
+    const vals = this.sampleValues();
+    for (const [path, raw] of Object.entries(vals)) {
+      const v = typeof raw === 'number' ? +raw.toFixed(4) : raw, was = rec.last[path];
+      if (was === undefined || v === was) continue;
+      let tr = rec.tracks.get(path);
+      if (!tr) { tr = { t: [0], v: [was] }; rec.tracks.set(path, tr); }
+      // Hold the old value until just before the change, so a long still stretch isn't turned into a slow slide.
+      if (tr.t[tr.t.length - 1] < rec.prevT) { tr.t.push(+rec.prevT.toFixed(3)); tr.v.push(was); }
+      tr.t.push(+t.toFixed(3)); tr.v.push(v);
+      rec.last[path] = v;
+    }
+    rec.prevT = t;
+    if (t >= MAX_LOOP_SECONDS) this.stopRecording(true);
+  }
+
+  private stopRecording(keep: boolean) {
+    const rec = this.rec;
+    if (!rec) return;
+    clearInterval(this.recTimer);
+    this.recordSample();
+    this.rec = null;
+    const duration = +((performance.now() - rec.start) / 1000).toFixed(3);
+    if (keep && duration >= 0.3 && rec.tracks.size) {
+      const tracks = [...rec.tracks.entries()].map(([path, tr]) => {
+        if (tr.t[tr.t.length - 1] < duration) { tr.t.push(duration); tr.v.push(tr.v[tr.v.length - 1]); }
+        return { path, t: tr.t, v: tr.v };
+      });
+      this.spec.loop = { enabled: true, duration, tracks };
+      const st = this.hooks.engine.field?.ctx.state.studio as StudioState | undefined;
+      if (st) st.loopT = 0;
+      this.hooks.tip('st-loop-made');
+    } else if (keep) {
+      if (this.spec.loop) this.spec.loop.enabled = true;
+      this.hooks.toast('Nothing changed while recording, so there is no loop yet.\n\nPress Record, then move sliders, drag layers (✥ Move) or turn the camera, and press Stop.');
+    }
+    if (this.isOpen) this.render();
+  }
+
+  private refreshRecorder() {
+    const b = this.root.querySelector<HTMLElement>('.st-rec');
+    if (b && this.rec) b.textContent = `■ Stop  ${fmtClock((performance.now() - this.rec.start) / 1000)}`;
+  }
+
+  private loopBlock() {
+    const loop = this.spec.loop;
+    const kids: (Node | null)[] = [
+      el('div', { class: 'hint st-note' }, 'Press Record, then play: move sliders, pick colours, drag layers, turn the camera, let it morph. Press Stop and your moves replay as a loop, also after saving.'),
+      el('div', { class: 'row' },
+        el('button', { class: 'st-rec' + (this.rec ? ' recording' : ''), onclick: () => (this.rec ? this.stopRecording(true) : this.startRecording()) },
+          this.rec ? '■ Stop  0:00' : loop ? '● Record again' : '● Record'),
+        loop && !this.rec ? el('button', { class: 'st-danger', onclick: () => { delete this.spec.loop; this.changed('live', true); } }, 'Delete loop') : null),
+    ];
+    if (loop && !this.rec) {
+      const names = [...new Set(loop.tracks.map((t) => this.pathLabel(t.path)))];
+      kids.push(
+        this.check('Play the loop', loop, 'enabled', 'live', true),
+        el('div', { class: 'hint st-note' }, `${loop.duration.toFixed(1)} s · ${loop.tracks.length} settings: ${names.slice(0, 6).join(', ')}${names.length > 6 ? '…' : ''}.` +
+          (loop.enabled ? ' While it plays, the loop drives those settings.' : '')));
+    }
+    return this.details('loop', el('span', {}, 'Loop recorder', loop ? el('span', { class: 'hint' }, ` · ${loop.duration.toFixed(1)} s${loop.enabled ? ', playing' : ', paused'}`) : null), false, ...kids);
+  }
+
+  /** A short human name for a recorded setting. */
+  private pathLabel(path: string) {
+    if (path === '@morph') return 'morphing';
+    const m = /^layer:([^.]+)\./.exec(path);
+    if (m) return this.spec.layers.find((L) => L.id === m[1])?.name ?? 'a layer';
+    return path.split('.')[0];
+  }
+
   // ---------- Field builders ----------
 
   private details(key: string, title: string | Node, openByDefault: boolean, ...kids: (Node | null | false)[]) {
@@ -218,16 +506,26 @@ export class Studio {
     return d;
   }
 
-  private slider<T extends object>(label: string, obj: T, key: keyof T, min: number, max: number, step: number, kind: Change = 'live', title = '') {
-    const cur = Number(obj[key]);
-    const range = el('input', { type: 'range', min, max, step, value: cur });
-    const box = el('input', { type: 'number', min, max, step, value: cur, class: 'st-num' });
+  private slider<T extends object>(label: string, obj: T, key: keyof T, min: number, max: number, step: number, kind: Change = 'live', title = '', after?: () => void) {
+    // The camera's angle around the scene keeps counting past ±180° (so loops don't spin back): show it wrapped.
+    const shown = () => {
+      const v = Number(obj[key]);
+      return +((obj as unknown) === this.spec.camera && key === 'azimuth' ? wrap180(v) : v).toFixed(3);
+    };
+    const range = el('input', { type: 'range', min, max, step, value: shown() });
+    const box = el('input', { type: 'number', min, max, step, value: shown(), class: 'st-num' });
+    this.refreshers.push(() => {
+      const v = String(shown());
+      if (range.value !== v) range.value = v;
+      if (document.activeElement !== box && box.value !== v) box.value = v;
+    });
     const set = (v: number, from: HTMLInputElement, done: boolean) => {
       if (!isFinite(v)) return;
       v = Math.min(max, Math.max(min, v));
       (obj[key] as unknown as number) = v;
       if (from !== range) range.value = String(v);
       if (from !== box) box.value = String(v);
+      after?.();
       // Rebuilding on every pixel of a drag would restart the scene: wait for the release.
       if (kind === 'build' && !done) return;
       this.changed(kind, kind === 'build');
@@ -268,6 +566,7 @@ export class Studio {
     const boxes = [0, 1, 2].map((i) => {
       const b = el('input', { type: 'number', step, value: v[i], class: 'st-num', title: 'xyz'[i] });
       b.oninput = () => { if (isFinite(+b.value)) { v[i] = +b.value; this.changed('live'); } };
+      this.refreshers.push(() => { const s = String(+v[i].toFixed(2)); if (document.activeElement !== b && b.value !== s) b.value = s; });
       return b;
     });
     return el('label', { class: 'st-field st-vec', title }, el('span', {}, label), ...boxes);
@@ -338,11 +637,18 @@ export class Studio {
     if (!this.isOpen) return;
     const scroll = this.root.parentElement?.scrollTop ?? 0;
     this.meters = [];
+    this.refreshers = [];
     const s = this.spec;
     const back = el('button', { onclick: () => this.close(), title: 'Leave the studio' }, '← Back');
     const save = el('button', { class: 'accent', onclick: () => this.save() }, 'Save scene');
+    const move = el('button', {
+      class: 'st-move' + (this.moveMode ? ' active' : ''), onclick: () => this.setMove(!this.moveMode),
+      title: 'Move layers with the mouse (M). While it is on, dragging the view moves a layer instead of the camera.',
+    }, '✥ Move');
+    const cam = (label: string, key: 'distance' | 'azimuth' | 'elevation' | 'fov' | 'autoRotate' | 'autoTilt', min: number, max: number, step: number, title = '') =>
+      this.slider(label, s.camera, key, min, max, step, 'live', title, () => this.applyCamera());
     this.root.replaceChildren(
-      el('div', { class: 'st-head' }, back, el('span', { class: 'st-title' }), save),
+      el('div', { class: 'st-head' }, back, el('span', { class: 'st-title' }), move, save),
       el('div', { class: 'hint st-dirty' }),
       this.details('scene', 'Scene', true,
         this.text('Name', s, 'name'),
@@ -350,13 +656,18 @@ export class Studio {
         this.slider('Particles', s, 'particleCount', 5000, 150000, 5000, 'build', 'More particles look denser but cost speed. 60,000 is a good start.'),
         HOSTED && this.savedId ? el('button', { class: 'st-danger', onclick: () => this.remove() }, 'Delete from this browser') : null,
       ),
+      this.loopBlock(),
       this.details('space', 'Space and camera', false,
         this.color('Space colour', s.space, 'color', 'live'),
         this.slider('Glow', s.space, 'glow', 0, 3, 0.05, 'live', 'Bloom around bright particles'),
-        this.slider('Camera distance', s.camera, 'distance', 10, 150, 1),
-        this.slider('Camera height', s.camera, 'height', -40, 60, 1),
-        this.slider('Field of view', s.camera, 'fov', 20, 110, 1),
-        this.slider('Auto-rotate', s.camera, 'autoRotate', -4, 4, 0.05),
+        el('div', { class: 'hint st-note' }, 'Camera: drag the view to turn it, scroll to zoom, right-drag to slide. These settings follow what you see.'),
+        cam('Distance', 'distance', 5, 150, 0.5),
+        cam('Angle around', 'azimuth', -180, 180, 1, 'Where the camera stands around the scene: 0 is in front, 90 is from the right'),
+        cam('Angle up/down', 'elevation', -89, 89, 1, 'Above (+) or below (−) the horizon'),
+        cam('Field of view', 'fov', 20, 110, 1),
+        cam('Auto-rotate', 'autoRotate', -4, 4, 0.05, 'Slowly circles the scene. 0 is off.'),
+        cam('Auto up/down', 'autoTilt', -4, 4, 0.05, 'Slowly swings the camera up and down. 0 is off.'),
+        el('button', { onclick: () => { s.camera.target = [0, 0, 0]; this.applyCamera(); this.changed('live'); } }, 'Look at the centre'),
       ),
       this.details('light', 'Lighting', false,
         this.check('Light the particles by their surface direction', s.light, 'enabled', 'live'),
@@ -436,7 +747,7 @@ export class Studio {
       this.changed('build', true);
     };
     const sp = L.spectrum;
-    return this.details('layer:' + L.id, el('span', {}, L.name, el('span', { class: 'hint' }, ` · ${pct} of particles`)), index === 0,
+    return this.details('layer:' + L.id, el('span', { class: L.id === this.selected ? 'st-selected' : '' }, L.name, el('span', { class: 'hint' }, ` · ${pct} of particles`)), index === 0,
       this.text('Name', L, 'name', () => this.render()),
       this.check('Visible', L, 'visible', 'build', true),
       this.slider('Share', L, 'share', 1, 100, 1, 'build', 'This layer\'s share of the particles, relative to the other layers'),
