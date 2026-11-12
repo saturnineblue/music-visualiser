@@ -175,6 +175,14 @@ export interface SceneHelpers {
   lerp(a: number, b: number, t: number): number;
   clamp(v: number, lo: number, hi: number): number;
   smoothstep(e0: number, e1: number, x: number): number;
+  /**
+   * The Scene Studio engine. Scenes saved from the studio call these with their embedded spec
+   * (see src/studio/spec.ts); hand-written scenes don't need it.
+   */
+  studio: {
+    setup(ctx: SceneContext, spec: unknown): void;
+    update(ctx: SceneContext, spec: unknown): void;
+  };
 }
 
 export interface CameraSpec {
@@ -228,6 +236,8 @@ export interface SceneContext {
   setCamera(spec: CameraSpec): void;
   /** Background colour as 0..1 rgb. */
   setBackground(r: number, g: number, b: number): void;
+  /** Bloom glow strength, 0..3 (overrides the scene's `bloom`). */
+  setBloom(strength: number): void;
 }
 
 export interface SceneDefinition {
@@ -246,6 +256,8 @@ export interface SceneDefinition {
   defaultLogic?: string;
   /** Model ids from models/<id>.glb to load before setup; available as ctx.models[id]. */
   models?: string[];
+  /** Set on scenes made in the Scene Studio: the spec the studio reopens for editing. */
+  studio?: unknown;
   setup?(ctx: SceneContext): void;
   update(ctx: SceneContext): void;
   dispose?(ctx: SceneContext): void;

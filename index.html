@@ -50,6 +50,8 @@
     </header>
     <div id="online-status" class="hint"></div>
 
+    <section id="studio-section" hidden></section>
+
     <section id="output-section">
       <h2>Output <span class="hint">projector / second screen</span></h2>
       <button id="output-btn" class="accent wide" title="Open a window with only the visuals, for a projector or second screen">⧉ Open projector window</button>
@@ -102,6 +104,8 @@
       <h2>Scenes <span class="hint">what the particles form</span></h2>
       <ul id="scene-list" class="list"></ul>
       <div class="row">
+        <button id="studio-new" class="accent" title="Build a scene from shapes and 3D models, with colours, lighting and sound mappings">✦ New in studio</button>
+        <button id="studio-edit" hidden title="Change this scene in the Scene Studio">Edit in studio</button>
         <button id="new-scene">+ Blank scene</button>
       </div>
       <div class="hint models">3D models: <span id="model-list">none yet</span><span id="model-drop-hint"><br />Drop a .glb file anywhere to add one.</span></div>

@@ -5,6 +5,7 @@ import { DEFAULT_MACROS, type LogicDefinition, type PointModel, type SceneDefini
 import { loadPointModel, invalidateModel } from './engine/models';
 import { SetManager, entryMacros, type SetEntry } from './ui/sets';
 import { askText } from './ui/dialog';
+import { Studio } from './studio/ui';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const store = {
@@ -60,15 +61,62 @@ const sets = new SetManager($('#set-section'), {
   toast: (msg) => showToast(msg, false),
 });
 
+// ---------- Scene Studio ----------
+let beforeStudio = '';
+const studio = new Studio($('#studio-section'), {
+  engine,
+  models: () => library.models,
+  sceneIds: () => library.scenes.map((s) => s.id),
+  async run(def) {
+    try {
+      const models = await loadModels(def);
+      const ok = engine.setScene(def, models);
+      controls.rebuild();
+      return ok;
+    } catch (e) {
+      showToast(`Could not show the scene: ${(e as Error).message}`, false);
+      return false;
+    }
+  },
+  refresh: () => refreshLibrary(),
+  async closed(sceneId) {
+    engine.renderer.setInsetRight($('#panel').offsetWidth);
+    const id = sceneId ?? beforeStudio;
+    if (!(await loadScene(library.scenes.some((s) => s.id === id) || sets.sceneDef(id) ? id : 'morphing-forms'))) await loadScene('morphing-forms');
+  },
+  toast: (msg) => showToast(msg, false),
+  async cannotGenerate() {
+    if (HOSTED) return 'Building models with Claude and Blender only works in the local app.';
+    if (!online) return 'Switch to Online (top of the panel) to let Claude build models.';
+    try {
+      const s = await api.status();
+      if (!s.hasKey) return 'No ANTHROPIC_API_KEY. Add it to .env and restart `npm run dev`.';
+      if (!s.blender) return 'Blender was not found. Install it, or set BLENDER_PATH in .env.';
+      return null;
+    } catch (e) {
+      return `Status check failed: ${(e as Error).message}`;
+    }
+  },
+  claudeModel: () => $<HTMLSelectElement>('#claude-model').value,
+});
+function openStudio(existing?: unknown) {
+  beforeStudio = engine.scene?.id ?? '';
+  studio.open(existing).then(() => engine.renderer.setInsetRight($('#panel').offsetWidth));
+}
+$('#studio-new').onclick = () => openStudio();
+$('#studio-edit').onclick = () => { if (engine.scene?.studio) openStudio(engine.scene.studio); };
+
 let library: Library = { scenes: [], logics: [], models: [] };
 let currentLogicId = store.get('logic', '');
 
 async function refreshLibrary() {
   library = await api.library();
   renderLists();
+  studio.libraryChanged();
 }
 
 function renderLists() {
+  $('#studio-edit').hidden = !engine.scene?.studio;
   const sceneList = $('#scene-list');
   sceneList.innerHTML = '';
   for (const s of [...library.scenes, ...sets.extraScenes()]) {
@@ -152,12 +200,13 @@ async function loadLogic(id: string) {
 if (import.meta.hot) {
   import.meta.hot.on('vis:library', async ({ kind, id }: { kind: string; id: string }) => {
     await refreshLibrary();
-    if (kind === 'scene' && engine.scene?.id === id) loadScene(id);
+    // The studio is editing this scene live: its own save must not swap the running scene.
+    if (kind === 'scene' && engine.scene?.id === id && !studio.owns(id)) loadScene(id);
     if (kind === 'logic' && currentLogicId === id) loadLogic(id);
     if (kind === 'model') {
       invalidateModel(id);
       modelVersions[id] = (modelVersions[id] ?? 0) + 1;
-      if (engine.scene?.models?.includes(id)) loadScene(engine.scene.id);
+      if (engine.scene?.models?.includes(id) && !studio.isOpen) loadScene(engine.scene.id);
     }
   });
 }
@@ -311,7 +360,7 @@ toggle.checked = online;
 async function applyOnline() {
   if (HOSTED) {
     $('#online-status').innerHTML =
-      'Hosted demo: the built-in scenes and logics only. To make new ones with Claude, ' +
+      'Hosted version: build scenes in the studio (saved in this browser) and play sets. To generate scenes or 3D models with Claude, ' +
       '<a href="https://github.com/saturnineblue/music-visualiser" target="_blank" rel="noopener">run it locally</a>.';
     return;
   }
@@ -531,9 +580,11 @@ function handleKey(e: KeyboardEvent) {
     if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen();
   }
   if (e.key === ' ') { engine.paused = !engine.paused; e.preventDefault(); }
-  if (/^[1-9]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) sets.go(+e.key - 1);
-  if (e.key === 'PageDown') { sets.next(); e.preventDefault(); }
-  if (e.key === 'PageUp') { sets.prev(); e.preventDefault(); }
+  if (!studio.isOpen) {
+    if (/^[1-9]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) sets.go(+e.key - 1);
+    if (e.key === 'PageDown') { sets.next(); e.preventDefault(); }
+    if (e.key === 'PageUp') { sets.prev(); e.preventDefault(); }
+  }
   if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && audio.kind === 'file') {
     skipFile((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 30 : 5));
     e.preventDefault();
@@ -592,4 +643,4 @@ engine.renderer.setInsetRight($('#panel').offsetWidth);
 })();
 
 // Debug handle (handy in the devtools console and for future tooling).
-(window as unknown as { vis: unknown }).vis = { engine, audio, api, sets };
+(window as unknown as { vis: unknown }).vis = { engine, audio, api, sets, studio };

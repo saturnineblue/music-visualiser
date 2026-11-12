@@ -45,6 +45,7 @@ docs/scene-template.ts  Starting point for "+ Blank scene"
 src/audio/         Mic / file / demo input → features (bass, mid, high, flux, beat, pulse, bpm, spectrum…)
 src/logic/         Evaluates a logic each frame → macros + scene params
 src/engine/        Particle buffers, physics helpers, formations, renderer (Three.js + bloom)
+src/studio/        Scene Studio: scene format, the engine that plays it, and its panel
 src/ui/            Panel, controls (lil-gui), local API client
 server/            Vite plugin: local API (library, save, Claude generation), hot-reload events
 ```
@@ -59,6 +60,7 @@ Each frame: `audio → features → logic → macros/params → scene.update(ctx
 
 - **In the app:** `+ Blank scene` creates `scenes/<name>.ts` from the template. `+ Mapping` and `Save logic as…` let you build logics by hand.
 - **With Claude in the app (Online):** choose New scene, Change current scene, New logic, or Change current logic, then describe what you want. You can also send Claude a summary of what's playing.
+- **Scene Studio:** `✦ New in studio` (Scenes section) builds a scene without code. Add layers of shapes and 3D models side by side, let a layer morph between several forms, and set colours, lighting, the space colour, glow and camera. Map any frequency range or audio feature to any setting, spread the spectrum across a shape, and give each part of a model its own colour and reaction. It plays live while you edit. Saved scenes are ordinary `scenes/<id>.ts` files (on the hosted site they are kept in the browser) and reopen with `Edit in studio`. Details: `docs/STUDIO.md`.
 - **3D objects:** drop a `.glb` onto the app (or export one from Blender into `models/`). Name the parts in Blender (`roof`, `windows`…) and scenes can animate each one separately. See *Dream House* and the Models section of `docs/SCENE_API.md`.
 - **With Claude Code / any editor:** edit files in `scenes/` or `logics/`. The running app hot-reloads them without restarting the audio.
 

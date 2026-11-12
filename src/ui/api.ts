@@ -1,4 +1,7 @@
 import type { LogicDefinition, SceneDefinition } from '../engine/types';
+import { studioSceneSource, type StudioSpec } from '../studio/spec';
+import { createStudioScene } from '../studio/runtime';
+import { studioStore } from '../studio/store';
 
 /**
  * Talks to the local server (server/plugin.ts). Everything here is localhost-only.
@@ -25,11 +28,19 @@ async function json<T>(r: Response): Promise<T> {
 }
 
 export const api = {
-  library: async () => (HOSTED ? (await hosted()).staticLibrary() : fetch('/api/library').then((r) => json<Library>(r))),
+  async library(): Promise<Library> {
+    if (!HOSTED) return fetch('/api/library').then((r) => json<Library>(r));
+    const lib = await (await hosted()).staticLibrary();
+    // Scenes made in the studio on this site live in this browser.
+    const mine = studioStore.list().map((s) => ({ id: s.id, name: s.name, description: s.description || 'Made in the Scene Studio.', author: 'studio · this browser' }));
+    return { ...lib, scenes: [...lib.scenes.filter((s) => !mine.some((m) => m.id === s.id)), ...mine] };
+  },
 
   async loadScene(id: string): Promise<SceneDefinition> {
     let mod: { default: SceneDefinition };
     if (HOSTED) {
+      const mine = studioStore.get(id);
+      if (mine) return createStudioScene(mine);
       mod = await (await hosted()).loadSceneModule(id);
     } else {
       // Cache-busting query so edited files are re-evaluated.
@@ -67,14 +78,20 @@ export const api = {
 
   /** A library scene's TypeScript source, or null if there is no such scene. */
   async sceneSource(id: string): Promise<string | null> {
-    if (HOSTED) return (await hosted()).sceneSource(id);
+    if (HOSTED) {
+      const mine = studioStore.get(id);
+      return mine ? studioSceneSource(mine) : (await hosted()).sceneSource(id);
+    }
     const r = await fetch(`/api/scenes/${id}/source`);
     return r.ok ? r.text() : null;
   },
 
   /** A library scene compiled to plain JS (what scene-set files carry), or null. */
   async sceneCompiled(id: string): Promise<string | null> {
-    if (HOSTED) return (await hosted()).sceneCompiled(id);
+    if (HOSTED) {
+      const mine = studioStore.get(id);
+      return mine ? studioSceneSource(mine) : (await hosted()).sceneCompiled(id); // studio scenes are already plain JS
+    }
     const r = await fetch(`/api/scenes/${id}/compiled`);
     return r.ok ? r.text() : null;
   },
@@ -89,5 +106,24 @@ export const api = {
 
   claude: (body: Record<string, unknown>) => HOSTED ? notHosted() :
     fetch('/api/claude', { method: 'POST', body: JSON.stringify(body) })
-      .then((r) => json<{ kind: 'scene' | 'logic'; id: string; name: string; summary: string }>(r)),
+      .then((r) => json<{ kind: 'scene' | 'logic' | 'model'; id: string; name: string; summary: string; parts?: string[] }>(r)),
+
+  /**
+   * Save a studio scene: as scenes/<id>.ts locally, in this browser on the hosted site.
+   * `overwrite` replaces an existing scene with the same id.
+   */
+  async saveStudio(spec: StudioSpec, overwrite: boolean): Promise<{ id: string; where: string }> {
+    if (HOSTED) {
+      if (!overwrite && (studioStore.get(spec.id) || (await (await hosted()).sceneSource(spec.id)) != null)) throw new Error('EXISTS');
+      studioStore.put(spec);
+      return { id: spec.id, where: 'this browser' };
+    }
+    const r = await fetch('/api/studio', { method: 'POST', body: JSON.stringify({ spec, overwrite }) });
+    if (r.status === 409) throw new Error('EXISTS');
+    const { id } = await json<{ id: string }>(r);
+    return { id, where: `scenes/${id}.ts` };
+  },
+
+  /** Remove a studio scene kept in this browser (hosted site only). */
+  deleteStudio(id: string) { studioStore.remove(id); },
 };

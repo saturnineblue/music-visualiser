@@ -5,6 +5,7 @@ import { transformWithEsbuild, type Plugin, type ViteDevServer } from 'vite';
 import { generate, type GenerateRequest } from './claude';
 import { findBlender } from './blender';
 import { generateObject } from './objectAgent';
+import { normalizeSpec, studioSceneSource } from '../src/studio/spec';
 
 /**
  * Local API, served by the Vite dev server (so there's a single `npm run dev` process):
@@ -17,6 +18,7 @@ import { generateObject } from './objectAgent';
  *   GET  /api/logics/:id          → logic JSON
  *   POST /api/logics              → save logic JSON
  *   POST /api/models?name=x.glb   → save an uploaded .glb into models/ (raw body)
+ *   POST /api/studio              → save a Scene Studio spec as scenes/<id>.ts
  *   POST /api/claude              → generate a scene/logic with Claude and save it
  *   GET  /api/scenes/:id/compiled → the scene compiled to plain JS (for scene sets)
  *   POST /api/compile             → { source } → { js }  compile scene TS from a set file
@@ -243,6 +245,20 @@ export function visualiserApi(env: Record<string, string>): Plugin {
             return send(res, 200, { id });
           }
 
+          if (p === '/api/studio' && req.method === 'POST') {
+            const body = await readBody(req);
+            const spec = normalizeSpec(body.spec);
+            spec.id = safeId(spec.id);
+            const file = path.join(SCENES, spec.id + '.ts');
+            if (fs.existsSync(file)) {
+              // Never silently replace a scene, least of all a hand-written one.
+              if (!body.overwrite) return send(res, 409, { error: `A scene with the id "${spec.id}" already exists.` });
+              backup(SCENES, spec.id + '.ts');
+            }
+            fs.writeFileSync(file, studioSceneSource(spec));
+            return send(res, 200, { id: spec.id });
+          }
+
           if (p === '/api/models' && req.method === 'POST') {
             const name = url.searchParams.get('name') ?? 'model.glb';
             if (!/\.glb$/i.test(name)) return send(res, 400, { error: 'Only .glb files are supported (in Blender: File → Export → glTF 2.0, format "glTF Binary").' });
@@ -297,6 +313,10 @@ export function visualiserApi(env: Record<string, string>): Plugin {
                 prompt: body.prompt, apiKey, model: body.model || defaultModel,
                 blenderPath: bin, modelsDir: MODELS, onProgress: progress,
               });
+              // The Scene Studio only wants the model: it becomes a layer there.
+              if ((body as { objectOnly?: boolean }).objectOnly) {
+                return send(res, 200, { kind: 'model', id: obj.id, name: obj.name, summary: obj.summary, parts: obj.parts });
+              }
               progress({ text: `Writing a scene for "${obj.name}"…` });
               modelNote = `Model: ${obj.summary}`;
               exampleScene = exampleFile('dream-house.ts') || exampleScene; // shows how to animate model parts

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { noise3, flow } from './noise';
 import { formations } from './formations';
+import { studioHelpers } from '../studio/runtime';
 import type {
   AudioFeatures, CameraSpec, IntegrateOptions, Macros, SceneContext, SceneHelpers,
 } from './types';
@@ -39,6 +40,7 @@ const fragmentShader = /* glsl */ `
 export interface Hooks {
   setCamera(spec: CameraSpec): void;
   setBackground(r: number, g: number, b: number): void;
+  setBloom(strength: number): void;
 }
 
 function hash(i: number, salt: number): number {
@@ -104,6 +106,7 @@ export class ParticleField {
       noise3,
       flow,
       formations,
+      studio: studioHelpers,
       setColorHSL: (i, h, s, l) => {
         h = h - Math.floor(h);
         let r: number, g: number, b: number;
@@ -142,6 +145,7 @@ export class ParticleField {
       },
       setCamera: (spec) => hooks.setCamera(spec),
       setBackground: (r, g, b) => hooks.setBackground(r, g, b),
+      setBloom: (v) => hooks.setBloom(v),
     };
   }
 

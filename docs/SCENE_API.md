@@ -5,6 +5,7 @@ This file is the authoring guide for humans **and** the reference sent to Claude
 ## Concepts
 
 - **Scene** (`scenes/<id>.ts`): decides *what* the particles form and how they move. Examples: a landscape, an object, an abstract structure.
+- **Studio scene**: a scene built in the app's Scene Studio instead of written by hand. It is still a `scenes/<id>.ts` file, but its body is a data spec played by a shared engine. See [STUDIO.md](STUDIO.md).
 - **Model** (`models/<id>.glb`): a 3D object (e.g. a house from Blender) that scenes can turn into particles. See [Models](#models).
 - **Logic** (`logics/<id>.json`): decides *how the music drives* the scene. It maps audio features to **macros** (shared by all scenes) and **params** (specific to one scene).
 - Any logic can be combined with any scene. Scenes should therefore read `ctx.macros` for their main behaviour, and expose extra knobs as `params`.
@@ -77,6 +78,7 @@ Flat typed arrays; particle `i` uses `[i*3, i*3+1, i*3+2]` in xyz/rgb arrays and
 | `colorize(hueOffset?, s?, l?)` | fn | colours all particles from `macros.hue`/`hueSpread`; `hueOffset(i)` returns −0.5..0.5 (default random per particle) |
 | `setCamera(spec)` | fn | `{ position, target, autoRotate, fov }` |
 | `setBackground(r,g,b)` | fn | 0..1 |
+| `setBloom(strength)` | fn | glow strength 0..3, overriding the scene's `bloom` (e.g. to pulse the glow) |
 
 `integrate(opts)` options: `spring` (default 2; 0 = free flight), `damping` (default 1.5, per second), `flow` (default 0; strength of the swirling flow field, try 1–6), `flowScale` (default 0.3; spatial frequency), `maxSpeed` (default 40).
 
@@ -105,6 +107,7 @@ You may also skip `integrate()` and write `positions` directly (e.g. for rigid, 
 - `noise3(x, y, z)` → −1..1 simplex noise (≈ 1µs per call: fine for one call per particle per frame at 60k particles, avoid more).
 - `flow(out, x, y, z, t)` → writes a swirling vector into `out[0..2]` (cheap).
 - `setColorHSL(i, h, s, l)`, `rand(i, salt?)` (stable random 0..1 per particle), `lerp`, `clamp`, `smoothstep`.
+- `studio.setup(ctx, spec)` / `studio.update(ctx, spec)`: the Scene Studio engine. Only scenes saved from the studio call these; hand-written scenes don't need them.
 - `formations.*(out, count, ...)` fill a `Float32Array(count*3)` (usually `ctx.targets`, or your own arrays created in `setup` for morphing):
   - `sphere(out, n, radius, surface?)`, `cube(out, n, size, surface?)`, `torus(out, n, R, r)`, `torusKnot(out, n, scale, p?, q?, tube?)`
   - `grid(out, n, width, depth, heightFn?)` — XZ grid, row-major; `heightFn(x, z)` → y. Great for landscapes.

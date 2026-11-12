@@ -63,6 +63,7 @@ export class Engine {
       field = new ParticleField(count, this.audio.features, this.logic.macros, this.logic.params, {
         setCamera: (s) => this.renderer.setCamera(s),
         setBackground: (r, g, b) => this.renderer.setBackground(r, g, b),
+        setBloom: (v) => this.renderer.setBloom(v),
       });
       // Carry particles over so the new formation assembles from the old one.
       if (prevField) {
