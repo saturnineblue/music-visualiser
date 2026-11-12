@@ -15,6 +15,7 @@ The studio has three places:
 
 In detail:
 
+- **Duplicate** (or **D**) appears among the tool buttons while an object is selected: it makes a copy with the same forms, look, spectrum and sound mappings, placed beside the original, and selects the copy.
 - **Move**: click an object to select it (each has a handle with its name), drag to slide it across the view, hold **Shift** while dragging to push it away or pull it closer, and scroll to resize it.
 - **Loops**: press **Record** in the view, then change things: sliders, colours, dragging objects, turning the camera, automatic morphing. Press it again and those changes replay as a loop. A scene can hold several loops; the **Loops** list in the panel picks the one that plays (or none), and renames or deletes them. Outside the studio, the scene's **Loop** slider (Controls → Scene params) picks the loop, so a set can hold one entry per loop of the same scene. A recording stops by itself after two minutes.
 - **Space and camera**: space (background) colour and glow. Camera: distance, angle around the scene, angle up/down, field of view, and automatic rotation both around the scene and up and down. The view comes first: drag it to turn the camera, scroll to zoom, right-drag to slide, and the camera settings follow. Changing other settings never moves the camera.

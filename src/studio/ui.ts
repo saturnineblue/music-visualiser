@@ -5,7 +5,7 @@ import { api, HOSTED, type ModelItem } from '../ui/api';
 import { ask, askText } from '../ui/dialog';
 import { createStudioScene, settleLoop, sourceValue, type LayerData, type StudioState } from './runtime';
 import {
-  AXES, SHAPES, cameraPosition, canonicalSpec, liveValues, setLive, newForm, newLayer, newSpec, normalizeSpec, slug, specModels, studioTargets,
+  AXES, SHAPES, cameraPosition, canonicalSpec, liveValues, setLive, newForm, newId, newLayer, newSpec, normalizeSpec, slug, specModels, studioTargets,
   type Leaf, type StudioForm, type StudioLayer, type StudioMapping, type StudioPart, type StudioSource, type StudioSpec,
 } from './spec';
 
@@ -83,6 +83,8 @@ const ICONS = {
   navigate: svg('<circle cx="12" cy="12" r="2.2"/><path d="M20.5 12a8.5 3.6 0 1 1-4.2-3.1"/><path d="M16.6 5.6l-.3 3.3 3.3.3"/>'),
   // Move: arrows in four directions.
   move: svg('<path d="M12 3v18M3 12h18"/><path d="M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>'),
+  // Duplicate: one sheet over another.
+  duplicate: svg('<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 5.5v-.5a1.5 1.5 0 0 0-1.5-1.5H5A1.5 1.5 0 0 0 3.5 5v9A1.5 1.5 0 0 0 5 15.5h.5"/>'),
   record: '<svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="6.5" fill="currentColor"/></svg>',
   stop: '<svg viewBox="0 0 24 24" width="18" height="18"><rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="currentColor"/></svg>',
   eye: svg('<path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.6"/>'),
@@ -494,12 +496,45 @@ export class Studio {
       title: this.rec ? 'Stop recording and keep the loop' : 'Record a loop: press, then change things (sliders, colours, objects, the camera), and press again',
       onclick: () => (this.rec ? this.stopRecording(true) : this.startRecording()),
     }, el('span', { class: 'st-icon', innerHTML: this.rec ? ICONS.stop : ICONS.record }), el('span', { class: 'st-rec-time' }, this.rec ? '0:00' : 'Record'));
+    // Actions on the selected object appear only while one is selected.
+    const picked = this.spec.layers.find((x) => x.id === this.selected);
+    const dup = picked && el('button', {
+      class: 'st-tool', title: `Duplicate “${picked.name}”: a copy with the same settings, placed beside it (D)`, onclick: () => this.duplicateSelected(),
+    }, el('span', { class: 'st-icon', innerHTML: ICONS.duplicate }), 'Duplicate');
     this.tools.replaceChildren(
       tool('navigate', 'Look', 'Look around: drag to turn the camera, scroll to zoom, right-drag to slide (N)'),
       tool('move', 'Move', 'Move objects: drag one to slide it, scroll to resize it, Shift-drag for depth (M)'),
+      ...(dup ? [el('i', { class: 'st-tool-sep' }), dup] : []),
       el('i', { class: 'st-tool-sep' }),
       rec,
     );
+  }
+
+  /** Copy the selected object (its forms, look, spectrum and sound mappings) and select the copy. */
+  duplicateSelected() {
+    const s = this.spec, i = s.layers.findIndex((x) => x.id === this.selected);
+    if (i < 0 || this.rec) return;
+    const src = s.layers[i];
+    const copy: StudioLayer = structuredClone(src);
+    copy.id = newId();
+    const names = new Set(s.layers.map((l) => l.name));
+    let name = `${src.name} copy`, n = 2;
+    while (names.has(name)) name = `${src.name} copy ${n++}`;
+    copy.name = name;
+    // Put it beside the original (to the camera's right), so the two don't sit on top of each other.
+    const right = new THREE.Vector3().setFromMatrixColumn(this.hooks.engine.renderer.camera.matrixWorld, 0);
+    const step = Math.max(2, (src.forms[0]?.scale ?? 8) * src.scale * 1.2);
+    for (const F of copy.forms) {
+      F.position = [+(F.position[0] + right.x * step).toFixed(2), +(F.position[1] + right.y * step).toFixed(2), +(F.position[2] + right.z * step).toFixed(2)];
+    }
+    s.layers.splice(i + 1, 0, copy);
+    // Sound mappings that drive the original drive the copy too.
+    for (const m of [...s.mappings]) {
+      if (m.target.startsWith(`layer:${src.id}.`)) s.mappings.push({ ...structuredClone(m), target: m.target.replace(`layer:${src.id}.`, `layer:${copy.id}.`) });
+    }
+    this.selected = copy.id;
+    this.popPos = { x: this.popPos.x + 24, y: this.popPos.y + 24 };
+    this.changed('build', true);
   }
 
   /** The selected object's settings, floating in the view next to it. */
@@ -953,6 +988,7 @@ export class Studio {
     return [
       this.check('Visible', L, 'visible', 'build', true),
       this.slider('Share', L, 'share', 1, 100, 1, 'build', 'This object\'s share of the particles, relative to the others'),
+      this.slider('Particle size', L, 'size', 0.1, 4, 0.05, 'live', 'How big this object\'s particles are'),
       ...L.forms.map((F, fi) => this.formBlock(L, F, fi)),
       (() => {
         const add = el('select', { title: 'Particles flow from one form to the next' }, el('option', { value: '' }, '+ Add a form to morph into…'), ...this.formOptions());
@@ -968,7 +1004,6 @@ export class Studio {
         this.slider('Scale ×', L, 'scale', 0.1, 4, 0.01),
         this.slider('Lift', L, 'lift', -30, 30, 0.5),
         this.slider('Spin (°/s)', L, 'spin', -180, 180, 1),
-        this.slider('Particle size', L, 'size', 0.1, 4, 0.05),
         this.slider('Brightness', L, 'brightness', 0, 4, 0.05),
         this.slider('Explode', L, 'explode', -10, 20, 0.1, 'live', 'Pushes particles outward along the surface'),
       ),

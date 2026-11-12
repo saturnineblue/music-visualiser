@@ -602,6 +602,7 @@ function handleKey(e: KeyboardEvent) {
   if (studio.isOpen) {
     if (e.key === 'm' || e.key === 'M') studio.setTool(studio.tool === 'move' ? 'navigate' : 'move');
     if (e.key === 'n' || e.key === 'N') studio.setTool('navigate');
+    if ((e.key === 'd' || e.key === 'D') && !e.metaKey && !e.ctrlKey && !e.altKey) studio.duplicateSelected();
     if (e.key === 'Escape') studio.escape();
   } else {
     if (/^[1-9]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) sets.go(+e.key - 1);
