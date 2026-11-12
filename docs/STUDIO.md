@@ -11,7 +11,7 @@ The studio has three places:
 
 - **The view** (the scene itself). On its left edge are the tool buttons: **Look** (or **N**) lets dragging turn the camera, **Move** (or **M**) lets dragging move objects instead, and **Record** records a loop. Click any object to open its settings in a pop-up next to it.
 - **The object pop-up**: everything about one object. Its forms (a built-in shape or a 3D model, with size, position, rotation and colour), its parts, its share of the particles, its look and movement, and the spectrum spread. Drag the pop-up by its top edge; **Esc** or ✕ closes it.
-- **The side panel**: only what concerns the whole scene. The list of objects (show or hide, reorder, add), the dramaturgy (loops, motion and morphing, sound mappings) and the look (space, camera, lighting). Audio input stays at the top: Mic, File, Demo and Stop, plus the seek bar for a file.
+- **The side panel**: only what concerns the whole scene. The list of objects (show or hide, reorder, add), the dramaturgy (loops, motion and morphing, sound mappings) and the look (space, camera, lighting). Audio input stays at the top: Mic, File, Demo and Stop, plus the seek bar for a file. The small screen button beside **Save scene** opens or closes the projector window, so the scene you are editing shows on the second screen live.
 
 In detail:
 

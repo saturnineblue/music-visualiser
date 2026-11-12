@@ -7,6 +7,7 @@ import { SetManager, entryMacros, type SetEntry } from './ui/sets';
 import { askText } from './ui/dialog';
 import { Studio } from './studio/ui';
 import { Tips } from './ui/tips';
+import { DEMO_PATTERNS } from './audio/demoSynth';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const store = {
@@ -100,6 +101,8 @@ const studio = new Studio($('#studio-section'), {
   },
   claudeModel: () => $<HTMLSelectElement>('#claude-model').value,
   tip: (id) => tips.show(id),
+  toggleOutput: () => toggleOutput(),
+  outputOpen: () => engine.renderer.outputOpen,
 });
 
 // ---------- First-time tips ----------
@@ -110,6 +113,7 @@ tipsToggle.onchange = () => tips.setEnabled(tipsToggle.checked);
 tips.onToggle = (on) => { tipsToggle.checked = on; };
 function openStudio(existing?: unknown) {
   beforeStudio = engine.scene?.id ?? '';
+  if (engine.renderer.outputOpen) ensurePreview();
   studio.open(existing).then(() => engine.renderer.setInsetRight($('#panel').offsetWidth));
 }
 $('#studio-new').onclick = () => openStudio();
@@ -252,7 +256,11 @@ async function startInput(kind: string) {
       fileInput.click();
       return;
     } else if (kind === 'demo') {
-      await audio.useDemo();
+      // Pressing Demo while a demo beat is playing steps to the next one; otherwise the last one used comes back.
+      const count = DEMO_PATTERNS.length;
+      const next = audio.kind === 'demo' ? (audio.demoPattern + 1) % count : Math.min(count - 1, Math.max(0, +store.get('demo', '0') || 0));
+      await audio.useDemo(next);
+      store.set('demo', String(next));
     } else {
       audio.stop();
     }
@@ -271,6 +279,10 @@ fileInput.onchange = async () => {
 function markInput() {
   document.querySelectorAll<HTMLButtonElement>('[data-input]').forEach((b) =>
     b.classList.toggle('active', b.dataset.input === audio.kind));
+  const demo = audio.kind === 'demo', p = DEMO_PATTERNS[audio.demoPattern];
+  $('[data-input="demo"]').textContent = demo ? `Demo ${audio.demoPattern + 1}` : 'Demo';
+  $('#demo-name').hidden = !demo;
+  if (demo) $('#demo-name').textContent = `Demo ${audio.demoPattern + 1} of ${DEMO_PATTERNS.length}: ${p.name}, ${p.bpm} BPM. ${p.about[0].toUpperCase()}${p.about.slice(1)}. Press Demo again for the next one.`;
   refreshTransport();
 }
 
@@ -535,6 +547,8 @@ outputPreview.checked = store.get('outputPreview', '1') === '1';
 engine.renderer.preview = outputPreview.checked;
 function refreshOutput() {
   const open = engine.renderer.outputOpen;
+  if (open && studio.isOpen) ensurePreview();
+  studio.outputChanged();
   outputBtn.textContent = open ? '✕ Close projector window' : '⧉ Open projector window';
   outputBtn.classList.toggle('accent', !open);
   outputBtn.classList.toggle('active', open);
@@ -570,7 +584,8 @@ async function placeOnOtherScreen(win: Window) {
   } catch { /* not supported or not allowed: the user drags it over */ }
 }
 
-outputBtn.onclick = () => {
+outputBtn.onclick = () => toggleOutput();
+function toggleOutput() {
   if (engine.renderer.outputOpen) { engine.renderer.closeOutput(); return; }
   let win: Window | null = null;
   try {
@@ -584,7 +599,13 @@ outputBtn.onclick = () => {
     return;
   }
   placeOnOtherScreen(win);
-};
+}
+/** The studio edits what is on screen here, so it needs the preview even while the projector shows the scene. */
+function ensurePreview() {
+  if (outputPreview.checked) return;
+  outputPreview.checked = true;
+  outputPreview.onchange?.(new Event('change'));
+}
 refreshOutput();
 
 // ---------- Keys ----------

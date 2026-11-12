@@ -33,6 +33,9 @@ export interface StudioHooks {
   claudeModel(): string;
   /** Offer a first-time tip (shown once, if tips are on). */
   tip(id: string): void;
+  /** Open or close the projector window, and whether it is open. */
+  toggleOutput(): void;
+  outputOpen(): boolean;
 }
 
 /** A loop being recorded: per setting, its keys so far. */
@@ -83,6 +86,8 @@ const ICONS = {
   navigate: svg('<circle cx="12" cy="12" r="2.2"/><path d="M20.5 12a8.5 3.6 0 1 1-4.2-3.1"/><path d="M16.6 5.6l-.3 3.3 3.3.3"/>'),
   // Move: arrows in four directions.
   move: svg('<path d="M12 3v18M3 12h18"/><path d="M9 6l3-3 3 3M9 18l3 3 3-3M6 9l-3 3 3 3M18 9l3 3-3 3"/>'),
+  // Projector: a screen on a stand.
+  output: svg('<rect x="3" y="4.5" width="18" height="11.5" rx="1.5"/><path d="M12 16v3.5M8 19.5h8"/>'),
   // Duplicate: one sheet over another.
   duplicate: svg('<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 5.5v-.5a1.5 1.5 0 0 0-1.5-1.5H5A1.5 1.5 0 0 0 3.5 5v9A1.5 1.5 0 0 0 5 15.5h.5"/>'),
   record: '<svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="6.5" fill="currentColor"/></svg>',
@@ -202,6 +207,17 @@ export class Studio {
     this.pop.replaceChildren();
     this.meters = [];
     this.hooks.closed(this.savedId);
+  }
+
+  /** The projector window opened or closed: show it on the studio's small button. */
+  outputChanged() {
+    const b = this.root.querySelector<HTMLElement>('.st-out');
+    if (!b) return;
+    const open = this.hooks.outputOpen();
+    b.classList.toggle('active', open);
+    b.title = open
+      ? 'Close the projector window'
+      : 'Open the projector window: only the visuals, for a projector or second screen. What you edit here shows there live.';
   }
 
   /** The model list changed (a .glb was added, or Claude built one). */
@@ -852,8 +868,9 @@ export class Studio {
     const save = el('button', { class: 'accent', onclick: () => this.save() }, 'Save scene');
     const cam = (label: string, key: 'distance' | 'azimuth' | 'elevation' | 'fov' | 'autoRotate' | 'autoTilt', min: number, max: number, step: number, title = '') =>
       this.slider(label, s.camera, key, min, max, step, 'live', title, () => this.applyCamera());
+    const out = el('button', { class: 'st-out', onclick: () => this.hooks.toggleOutput(), innerHTML: ICONS.output });
     this.root.replaceChildren(
-      el('div', { class: 'st-head' }, back, el('span', { class: 'st-title' }), save),
+      el('div', { class: 'st-head' }, back, el('span', { class: 'st-title' }), out, save),
       el('div', { class: 'hint st-dirty' }),
       this.details('scene', 'Scene', true,
         this.text('Name', s, 'name'),
@@ -920,6 +937,7 @@ export class Studio {
       ),
     );
     this.refreshHead();
+    this.outputChanged();
     this.renderLog();
     if (this.root.parentElement) this.root.parentElement.scrollTop = scroll;
     this.renderTools();

@@ -9,7 +9,7 @@ npm install
 npm run dev        # http://127.0.0.1:5173
 ```
 
-Pick an input: Microphone / line-in, Audio file, or **Demo beat** (a built-in synth loop, handy for testing). Keys: **H** hides the panel, **F** toggles fullscreen, **Space** pauses. Newcomers get small one-time tips in the bottom-left corner; switch them off in the bubble or with **Show tips for newcomers** at the bottom of the panel.
+Pick an input: Microphone / line-in, Audio file, or **Demo beat** (built-in synth loops, handy for testing). Press **Demo** again to step through the three: *House* (120 BPM, a steady kick on every beat), *Breakbeat* (172 BPM, off-beat kicks, with a snare roll and a break every eighth bar) and *Downtempo* (84 BPM, sparse and swung, building from a quiet pad over 16 bars). Keys: **H** hides the panel, **F** toggles fullscreen, **Space** pauses. Newcomers get small one-time tips in the bottom-left corner; switch them off in the bubble or with **Show tips for newcomers** at the bottom of the panel.
 
 For VJing with a projector, click **⧉ Open projector window** (Output section). It opens a second window with only the visuals: drag it to the projector and press **F** or double-click it for fullscreen, and keep the controls on your main screen. Keep the main window visible, since it drives both (browsers slow down hidden windows). In Chrome/Edge, if you allow window management, the window moves to the other screen by itself. Untick **Show preview here** to save GPU time.
 

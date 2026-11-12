@@ -136,10 +136,14 @@ export class AudioEngine {
     this.kind = 'file';
   }
 
-  async useDemo() {
+  /** Which built-in demo beat plays (index into DEMO_PATTERNS). */
+  demoPattern = 0;
+
+  async useDemo(pattern = this.demoPattern) {
     await this.init();
     this.disconnectCurrent();
-    this.demo = new DemoSynth(this.ctx!);
+    this.demoPattern = pattern;
+    this.demo = new DemoSynth(this.ctx!, pattern);
     this.demo.output.connect(this.inputGain);
     if (this.monitor) this.demo.output.connect(this.monitorGain);
     this.current = this.demo.output;

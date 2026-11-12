@@ -264,3 +264,7 @@ body.light-stage .st-handle.selected > span { color: #2947bd; }
 .st-radio { flex: 0 0 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--muted); }
 .st-radio.on { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 45%, transparent 50%); }
 #studio-section h3 { margin-top: 18px; }
+.st-head button.st-out { display: flex; padding: 4px 7px; color: var(--muted); }
+.st-head button.st-out:hover { color: var(--text); }
+.st-head button.st-out.active { color: var(--accent); border-color: var(--accent); }
+#demo-name { margin-top: 6px; }
