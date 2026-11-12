@@ -10,7 +10,7 @@ Open it with **✦ New in studio** in the Scenes section, or **Edit in studio** 
 The studio has three places:
 
 - **The view** (the scene itself). On its left edge are the tool buttons: **Look** (or **N**) lets dragging turn the camera, **Move** (or **M**) lets dragging move objects instead, and **Record** records a loop. Click any object to open its settings in a pop-up next to it.
-- **The object pop-up**: everything about one object. Its forms (a built-in shape or a 3D model, with size, position, rotation and colour), its parts, its share of the particles, its look and movement, and the spectrum spread. Drag the pop-up by its top edge; **Esc** or ✕ closes it.
+- **The object pop-up**: everything about one object. Its forms (a built-in shape or a 3D model, with size, position, rotation and colour), its parts, its number of particles and their size, its look and movement, and the spectrum spread. Drag the pop-up by its top edge; **Esc** or ✕ closes it.
 - **The side panel**: only what concerns the whole scene. The list of objects (show or hide, reorder, add), the dramaturgy (loops, motion and morphing, sound mappings) and the look (space, camera, lighting). Audio input stays at the top: Mic, File, Demo and Stop, plus the seek bar for a file. The small screen button beside **Save scene** opens or closes the projector window, so the scene you are editing shows on the second screen live.
 
 In detail:
@@ -21,7 +21,7 @@ In detail:
 - **Space and camera**: space (background) colour and glow. Camera: distance, angle around the scene, angle up/down, field of view, and automatic rotation both around the scene and up and down. The view comes first: drag it to turn the camera, scroll to zoom, right-drag to slide, and the camera settings follow. Changing other settings never moves the camera.
 - **Lighting**: a key light (colour, intensity, direction, height), ambient light, and a fill light from the opposite side. Particles are shaded by the direction of the surface they sit on.
 - **Motion and morphing**: tightness, damping, turbulence, beat burst, overall brightness and colour shift. Morphing steps every few beats, every few seconds, or follows a slider that mappings can drive.
-- **Objects** (called layers in the file format): each takes a share of the particles and shows one **form**: a built-in shape or a 3D model, with its own size, position, rotation and colour (one colour, a gradient, or the model's own colours). Several layers sit side by side.
+- **Objects** (called layers in the file format): each has its own number of particles (out of the scene's budget) and shows one **form**: a built-in shape or a 3D model, with its own size, position, rotation and colour (one colour, a gradient, or the model's own colours). Several layers sit side by side.
   - A layer with **more than one form** morphs from one to the next.
   - **Parts** (models only): each named part can have its own colour and its own reaction (lift, push out, glow) to a sound source of its own.
   - **Spectrum across the shape**: lays a frequency range over the layer along an axis (or one band per part), so each region is pushed, glows, grows or is tinted by its own frequency.
@@ -58,7 +58,7 @@ The spec (`StudioSpec` in [`src/studio/spec.ts`](../src/studio/spec.ts), which i
 {
   "format": "music-visualiser-studio", "version": 1,
   "id": "my-scene", "name": "My Scene", "description": "",
-  "particleCount": 60000,
+  "particleCount": 60000,           // the particle budget; the scene uses the sum of its visible objects' counts
   "space": { "color": "#020308", "glow": 0.8, "particles": "auto" },   // particles: auto | glow | solid
   "camera": { "distance": 47, "azimuth": 0, "elevation": 10, "fov": 60,   // angles in degrees
               "autoRotate": 0.4, "autoTilt": 0, "target": [0, 0, 0] },
@@ -69,7 +69,7 @@ The spec (`StudioSpec` in [`src/studio/spec.ts`](../src/studio/spec.ts), which i
   "hueShift": 0, "brightness": 1,
   "layers": [
     {
-      "id": "house1", "name": "House", "visible": true, "share": 60,
+      "id": "house1", "name": "House", "visible": true, "count": 36000,
       "forms": [
         { "kind": "model", "model": "house", "shape": "sphere",
           "scale": 13, "position": [8, 0, 0], "rotation": [0, 20, 0],
@@ -107,6 +107,7 @@ Notes:
 - **Spectrum** `axis`: `none`, one of the axes, or `part` (one band per part of the model).
 - **Mapping targets**: `brightness`, `hueShift`, `morph.position`, `motion.turbulence`, `motion.spring`, `space.glow`, `light.intensity`, `light.ambient`, `light.azimuth`, `light.elevation`, and per layer `layer:<id>.scale`, `.lift`, `.spin`, `.size`, `.brightness`, `.explode`, `.spectrum.push`, `.spectrum.glow`. A mapping adds `curve(source) × amount` to its target, smoothed by `attack` and `release` (seconds).
 - **Particles** (`space.particles`): `glow` adds each particle's light to the space behind it, so it needs a dark space colour and black shows nothing. `solid` draws opaque dots, so dark colours show on a light space; bloom is off in this mode. `auto` picks `solid` when the space colour is light.
+- **Particles per object**: each layer has a `count`. The visible layers' counts add up to at most `particleCount` (the budget, set under Scene in the panel); the scene simulates and draws only that sum, so the budget caps the load and unused budget costs nothing. A spec with the older relative `share` field is converted.
 - **Camera**: `azimuth` 0 looks from the front (+z), 90 from the right; `elevation` is degrees above the horizon. `autoTilt` swings the camera between ±60°. A spec with the older `height` field is converted.
 - **Loop tracks**: `path` is a key of `liveValues(spec)`: any numeric, colour or on/off setting, written as its place in the spec with layers addressed by id (`space.glow`, `light.azimuth`, `layer:<id>.scale`, `layer:<id>.forms.0.color.a`, `mappings.0.amount`). `t` is seconds (ascending, within `duration`) and `v` the values: numbers are interpolated, colours and switches change at their time. The special path `@morph` records the automatic morph position. While a loop plays, it overwrites those settings every frame; when it stops or another takes over, they go back to what they were. A scene with loops gets a `loop` scene param (0 = none, 1 = the first loop…), which is what the engine reads: logics, the Controls panel and set entries can switch loops through it. A spec with the older single `loop` field is converted.
 - Layer `id`s are letters and digits only, and unique within the spec.

@@ -1,5 +1,6 @@
 import type { AudioFeatures } from '../engine/types';
 import { DemoSynth } from './demoSynth';
+import { TempoTracker } from './tempo';
 
 export type InputKind = 'none' | 'mic' | 'file' | 'demo';
 
@@ -56,8 +57,11 @@ export class AudioEngine {
   };
   private fluxHistory: number[] = [];
   private lastBeat = 0;
-  private beatTimes: number[] = [];
   private clock = 0;
+  readonly tempo = new TempoTracker();
+  /** Raw numbers behind beat detection, for tuning (`vis.audio.debug` in the console). */
+  readonly debug = { lowFlux: 0, lowLevel: 0, mean: 0, peak: 0 };
+  private lowPeak = 0;
 
   get started() { return this.ctx !== null; }
 
@@ -98,6 +102,10 @@ export class AudioEngine {
     this.stream = null;
     this.fileEl?.pause();
     this.demo?.stop();
+    this.tempo.reset();
+    this.features.bpm = 0;
+    this.fluxHistory = [];
+    this.lowPeak = 0;
     this.demo = null;
   }
 
@@ -239,23 +247,24 @@ export class AudioEngine {
     f.flux = this.agc.flux.apply(flux, dt);
     f.centroid = msum > 0.001 ? wsum / msum / BANDS : 0;
 
-    // Onset / beat detection on low-frequency flux vs. its recent average.
+    // Tempo: from how the whole rhythm repeats (see tempo.ts), so off-beat and sparse kicks don't mislead it.
+    this.tempo.push(flux, this.clock, dt);
+    f.bpm = this.tempo.bpm;
+
+    // Beat (a low-frequency hit, usually the kick): low-band flux standing out from its recent average.
     const hist = this.fluxHistory;
     hist.push(lowFlux);
     if (hist.length > 45) hist.shift();
     const mean = hist.reduce((a, c) => a + c, 0) / hist.length;
-    if (lowFlux > mean * this.beatThreshold && lowFlux > 0.08 && this.clock - this.lastBeat > 0.22) {
+    const lowLevel = range(0, 14);
+    // The loudest recent hit, fading over about ten seconds: small wobbles (a pad's slow beating, a
+    // quiet intro after a loud passage) must reach a fair share of it to count as a beat.
+    this.lowPeak = Math.max(lowFlux, this.lowPeak * Math.exp(-dt / 10));
+    Object.assign(this.debug, { lowFlux, lowLevel, mean, peak: this.lowPeak });
+    if (lowFlux > mean * this.beatThreshold && lowFlux > 0.08 && lowFlux > this.lowPeak * 0.3 && lowLevel > 0.2 &&
+      this.clock - this.lastBeat > 0.22) {
       f.beat = true;
       f.pulse = 1;
-      if (this.lastBeat > 0) {
-        const iv = this.clock - this.lastBeat;
-        if (iv > 0.25 && iv < 1.5) {
-          this.beatTimes.push(iv);
-          if (this.beatTimes.length > 12) this.beatTimes.shift();
-          const sorted = [...this.beatTimes].sort((a, b) => a - b);
-          f.bpm = Math.round(60 / sorted[Math.floor(sorted.length / 2)]);
-        }
-      }
       this.lastBeat = this.clock;
     }
   }

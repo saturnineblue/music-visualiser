@@ -93,8 +93,8 @@ export interface StudioLayer {
   id: string;
   name: string;
   visible: boolean;
-  /** Relative share of the scene's particles. */
-  share: number;
+  /** How many particles this object is made of. The visible objects' counts add up to at most `particleCount`. */
+  count: number;
   /** One form = static. Several = the layer morphs from one to the next. */
   forms: StudioForm[];
   /** Multiplies the forms' scale. */
@@ -116,6 +116,7 @@ export interface StudioSpec {
   id: string;
   name: string;
   description: string;
+  /** The particle budget: the most particles the scene may use. What it actually uses is the sum of its visible objects' counts. */
   particleCount: number;
   space: {
     /** Background colour of the surrounding space. */
@@ -231,7 +232,7 @@ export function newForm(kind: 'shape' | 'model' = 'shape', what = 'sphere'): Stu
 
 export function newLayer(name: string, form: StudioForm): StudioLayer {
   return {
-    id: newId(), name, visible: true, share: 50, forms: [form],
+    id: newId(), name, visible: true, count: 20000, forms: [form],
     scale: 1, lift: 0, spin: 0, size: 1, brightness: 1, explode: 0,
     spectrum: { axis: 'none', lo: 40, hi: 8000, push: 2, glow: 1, size: 0, tint: '#ffffff', tintAmount: 0 },
   };
@@ -239,6 +240,7 @@ export function newLayer(name: string, form: StudioForm): StudioLayer {
 
 export function newSpec(name = 'Studio scene'): StudioSpec {
   const layer = newLayer('Sphere', newForm('shape', 'sphere'));
+  layer.count = 40000; // leaves room in the 60,000 budget for a second object
   return {
     format: STUDIO_FORMAT, version: 1, id: slug(name), name, description: '',
     particleCount: 60000,
@@ -314,7 +316,8 @@ export function normalizeSpec(raw: unknown): StudioSpec {
       id: typeof L?.id === 'string' && /^[a-z0-9]+$/i.test(L.id) ? L.id : base.id,
       name: typeof L?.name === 'string' && L.name ? L.name : base.name,
       visible: L?.visible !== false,
-      share: num(L?.share, 50, 1, 100),
+      // Older specs gave each object a relative share of the budget instead of a count (converted below).
+      count: typeof L?.count === 'number' && isFinite(L.count) ? Math.round(L.count) : -num(L?.share, 50, 1, 100),
       forms,
       scale: num(L?.scale, 1, 0.05, 10), lift: num(L?.lift, 0, -60, 60), spin: num(L?.spin, 0, -360, 360),
       size: num(L?.size, 1, 0.05, 6), brightness: num(L?.brightness, 1, 0, 5), explode: num(L?.explode, 0, -30, 30),
@@ -327,11 +330,14 @@ export function normalizeSpec(raw: unknown): StudioSpec {
     };
   });
   const curves = ['linear', 'sqrt', 'square', 'exp', 'smooth', 'threshold'];
-  return {
+  const budget = Math.round(num(s.particleCount, d.particleCount, 1000, 300000));
+  const shares = layers.filter((L) => L.count < 0 && L.visible).reduce((a, L) => a - L.count, 0);
+  for (const L of layers) if (L.count < 0) L.count = Math.round((budget * -L.count) / Math.max(1, shares));
+  const spec: StudioSpec = {
     format: STUDIO_FORMAT, version: 1,
     id: slug(typeof s.id === 'string' && s.id ? s.id : name), name,
     description: typeof s.description === 'string' ? s.description : '',
-    particleCount: Math.round(num(s.particleCount, d.particleCount, 1000, 300000)),
+    particleCount: budget,
     space: {
       color: hex(s.space?.color, d.space.color), glow: num(s.space?.glow, d.space.glow, 0, 3),
       particles: ['glow', 'solid'].includes(s.space?.particles as string) ? s.space!.particles : 'auto',
@@ -363,6 +369,42 @@ export function normalizeSpec(raw: unknown): StudioSpec {
     })),
     ...cleanLoops(s),
   };
+  fitBudget(spec);
+  return spec;
+}
+
+export const MIN_OBJECT_PARTICLES = 500;
+
+/** Particles the scene actually uses: its visible objects' counts (never more than the budget). */
+export function usedParticles(spec: StudioSpec): number {
+  const sum = spec.layers.reduce((a, L) => a + (L.visible ? L.count : 0), 0);
+  return Math.max(100, Math.min(spec.particleCount, sum));
+}
+
+/** Keep every object's count sane and the visible ones within the budget (scaling them down together if not). */
+export function fitBudget(spec: StudioSpec) {
+  for (const L of spec.layers) L.count = Math.max(MIN_OBJECT_PARTICLES, Math.min(spec.particleCount, Math.round(L.count)));
+  const visible = spec.layers.filter((L) => L.visible);
+  const sum = visible.reduce((a, L) => a + L.count, 0);
+  if (sum <= spec.particleCount) return;
+  const k = spec.particleCount / sum;
+  for (const L of visible) L.count = Math.max(MIN_OBJECT_PARTICLES, Math.floor((L.count * k) / 100) * 100);
+}
+
+/**
+ * Find `want` particles for a new object: what is left of the budget if that is enough, otherwise
+ * the other visible objects give some up proportionally. Returns the count the new object gets.
+ */
+export function makeRoom(spec: StudioSpec, want: number): number {
+  want = Math.max(MIN_OBJECT_PARTICLES, Math.min(want, spec.particleCount));
+  const visible = spec.layers.filter((L) => L.visible);
+  const used = visible.reduce((a, L) => a + L.count, 0);
+  const free = spec.particleCount - used;
+  if (free >= want) return want;
+  if (free >= Math.min(want, 2000)) return free;
+  const k = Math.max(0, spec.particleCount - want) / Math.max(1, used);
+  for (const L of visible) L.count = Math.max(MIN_OBJECT_PARTICLES, Math.floor((L.count * k) / 100) * 100);
+  return want;
 }
 
 function cleanCamera(c: any, d: StudioSpec['camera']): StudioSpec['camera'] {
@@ -435,7 +477,7 @@ export function liveValues(spec: StudioSpec): Record<string, Leaf> {
   for (const k of ['space', 'camera', 'light', 'motion', 'morph'] as const) walk(spec[k], k + '.', [], out);
   out.hueShift = spec.hueShift;
   out.brightness = spec.brightness;
-  for (const L of spec.layers) walk(L, `layer:${L.id}.`, ['id', 'name', 'visible', 'share', 'kind', 'shape', 'model'], out);
+  for (const L of spec.layers) walk(L, `layer:${L.id}.`, ['id', 'name', 'visible', 'count', 'kind', 'shape', 'model'], out);
   spec.mappings.forEach((m, i) => walk(m, `mappings.${i}.`, ['target'], out));
   return out;
 }
@@ -535,7 +577,7 @@ const scene = {
   name: ${q(spec.name)},
   description: ${q(spec.description || 'Made in the Scene Studio.')},
   author: 'studio',
-  particleCount: ${spec.particleCount},
+  particleCount: ${usedParticles(clean)},
   models: ${JSON.stringify(specModels(spec))},
   bloom: ${spec.space.glow},${loopParam(clean) ? `
   params: ${JSON.stringify(loopParam(clean))},` : ''}

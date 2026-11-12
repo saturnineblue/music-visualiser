@@ -48,7 +48,7 @@ models/*.glb       3D objects scenes can turn into particles (named parts react 
 docs/SCENE_API.md  The authoring guide, also sent to Claude as its reference
 docs/scene-template.ts  Starting point for "+ Blank scene"
 
-src/audio/         Mic / file / demo input → features (bass, mid, high, flux, beat, pulse, bpm, spectrum…)
+src/audio/         Mic / file / demo input → features (bass, mid, high, flux, beat, pulse, bpm, spectrum…); tempo.ts estimates the tempo
 src/logic/         Evaluates a logic each frame → macros + scene params
 src/engine/        Particle buffers, physics helpers, formations, renderer (Three.js + bloom)
 src/studio/        Scene Studio: scene format, the engine that plays it, and its panel

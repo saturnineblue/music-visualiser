@@ -1,13 +1,13 @@
 import type { AudioFeatures, Curve, PointModel, SceneContext, SceneDefinition } from '../engine/types';
 import { formations } from '../engine/formations';
-import { cameraPosition, liveValues, loopParam, setLive, specModels, trackValue, type Leaf, type Axis, type StudioForm, type StudioLayer, type StudioSource, type StudioSpec } from './spec';
+import { cameraPosition, liveValues, loopParam, setLive, specModels, trackValue, usedParticles, type Leaf, type Axis, type StudioForm, type StudioLayer, type StudioSource, type StudioSpec } from './spec';
 
 /**
  * Plays a StudioSpec (see spec.ts): the engine behind every scene made in the Scene Studio.
  * Scenes reach it as `ctx.helpers.studio.setup(ctx, spec)` / `.update(ctx, spec)`.
  *
  * Numbers in the spec are read live every frame, so the studio can edit a running scene in place.
- * Geometry is rebuilt only when the layers, their forms or the particle shares change, and colours
+ * Geometry is rebuilt only when the layers, their forms or their particle counts change, and colours
  * only when `spec.rev` changes.
  */
 
@@ -208,13 +208,13 @@ function paintForm(fd: FormData, F: StudioForm, L: StudioLayer, n: number, start
 /** Bring the built geometry and colours in line with the spec. */
 function sync(ctx: SceneContext, spec: StudioSpec, st: StudioState) {
   const visible = spec.layers.filter((L) => L.visible && L.forms.length);
-  const sig = JSON.stringify([ctx.count, Object.keys(ctx.models), visible.map((L) => [L.id, L.share, L.forms.map((F) => [F.kind, F.shape, F.model])])]);
+  const sig = JSON.stringify([ctx.count, Object.keys(ctx.models), visible.map((L) => [L.id, L.count, L.forms.map((F) => [F.kind, F.shape, F.model])])]);
   if (sig !== st.sig) {
-    const total = visible.reduce((s, L) => s + Math.max(0.0001, L.share), 0);
+    const total = visible.reduce((s, L) => s + Math.max(1, L.count), 0);
     const prev = new Map(st.layers.map((l) => [l.id, l.spin]));
     let start = 0;
     st.layers = visible.map((L, i) => {
-      const n = i === visible.length - 1 ? ctx.count - start : Math.min(ctx.count - start, Math.round((ctx.count * Math.max(0.0001, L.share)) / total));
+      const n = i === visible.length - 1 ? ctx.count - start : Math.min(ctx.count - start, Math.round((ctx.count * Math.max(1, L.count)) / total));
       const ld: LayerData = { id: L.id, start, n, forms: L.forms.map((F) => buildForm(F, n, ctx.models)), spin: prev.get(L.id) ?? 0, cx: 0, cy: 0, cz: 0, cr: 1 };
       start += n;
       return ld;
@@ -515,7 +515,7 @@ export function createStudioScene(spec: StudioSpec): SceneDefinition {
     name: spec.name,
     description: spec.description || 'Made in the Scene Studio.',
     author: 'studio',
-    particleCount: spec.particleCount,
+    particleCount: usedParticles(spec),
     models: specModels(spec),
     bloom: spec.space.glow,
     params: loopParam(spec),

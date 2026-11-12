@@ -271,7 +271,9 @@ export class DemoSynth {
       const o = this.ctx.createOscillator(), g = this.ctx.createGain();
       o.type = 'sine';
       o.frequency.value = f * mult;
-      g.gain.setValueAtTime(vol * v, t);
+      // A few milliseconds of attack: starting at full level would add a click that reads as a low thump.
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(vol * v, t + 0.006);
       g.gain.exponentialRampToValueAtTime(0.001, t + 1.1);
       o.connect(g).connect(this.output);
       o.start(t); o.stop(t + 1.15);

@@ -5,7 +5,7 @@ import { api, HOSTED, type ModelItem } from '../ui/api';
 import { ask, askText } from '../ui/dialog';
 import { createStudioScene, settleLoop, sourceValue, type LayerData, type StudioState } from './runtime';
 import {
-  AXES, SHAPES, cameraPosition, canonicalSpec, liveValues, setLive, newForm, newId, newLayer, newSpec, normalizeSpec, slug, specModels, studioTargets,
+  AXES, SHAPES, MIN_OBJECT_PARTICLES, cameraPosition, canonicalSpec, fitBudget, liveValues, makeRoom, setLive, newForm, newId, usedParticles, newLayer, newSpec, normalizeSpec, slug, specModels, studioTargets,
   type Leaf, type StudioForm, type StudioLayer, type StudioMapping, type StudioPart, type StudioSource, type StudioSpec,
 } from './spec';
 
@@ -245,10 +245,11 @@ export class Studio {
   private changed(kind: Change, rerender = false) {
     if (kind !== 'live') this.spec.rev = (this.spec.rev ?? 0) + 1;
     if (kind === 'build') {
+      fitBudget(this.spec); // e.g. the budget was lowered, or a hidden object came back
       const scene = this.hooks.engine.scene;
       const loaded = Object.keys(this.hooks.engine.field?.ctx.models ?? {});
       const needsRun = specModels(this.spec).some((m) => !loaded.includes(m)) ||
-        this.hooks.engine.field?.count !== this.spec.particleCount || scene?.studio !== this.spec;
+        this.hooks.engine.field?.count !== usedParticles(this.spec) || scene?.studio !== this.spec;
       if (needsRun) { this.rebuild(); return; }
     }
     if (rerender) this.render();
@@ -310,6 +311,7 @@ export class Studio {
       const res = await api.claude({ mode: 'new-object', objectOnly: true, prompt, model: this.hooks.claudeModel() });
       await this.hooks.refresh();
       const layer = newLayer(res.name, newForm('model', res.id));
+      layer.count = makeRoom(this.spec, layer.count);
       this.spec.layers.push(layer);
       this.selected = layer.id;
       this.popPos = { x: 16, y: 90 };
@@ -537,6 +539,7 @@ export class Studio {
     let name = `${src.name} copy`, n = 2;
     while (names.has(name)) name = `${src.name} copy ${n++}`;
     copy.name = name;
+    copy.count = makeRoom(s, src.count);
     // Put it beside the original (to the camera's right), so the two don't sit on top of each other.
     const right = new THREE.Vector3().setFromMatrixColumn(this.hooks.engine.renderer.camera.matrixWorld, 0);
     const step = Math.max(2, (src.forms[0]?.scale ?? 8) * src.scale * 1.2);
@@ -875,7 +878,8 @@ export class Studio {
       this.details('scene', 'Scene', true,
         this.text('Name', s, 'name'),
         this.text('Notes', s, 'description'),
-        this.slider('Particles', s, 'particleCount', 5000, 150000, 5000, 'build', 'More particles look denser but cost speed. 60,000 is a good start.'),
+        this.slider('Particle budget', s, 'particleCount', 5000, 150000, 5000, 'build', 'The most particles the scene may use. Each object takes its own number out of this; more particles look denser but cost speed.'),
+        el('div', { class: 'hint st-note' }, `Using ${usedParticles(s).toLocaleString()} of ${s.particleCount.toLocaleString()}. Set each object's number in its settings.`),
         HOSTED && this.savedId ? el('button', { class: 'st-danger', onclick: () => this.remove() }, 'Delete this scene') : null,
       ),
 
@@ -950,6 +954,7 @@ export class Studio {
       if (!pick.value) return;
       const form = this.formFrom(pick.value);
       const layer = newLayer(form.kind === 'model' ? form.model : SHAPE_LABELS[form.shape], form);
+      layer.count = makeRoom(this.spec, layer.count);
       this.spec.layers.push(layer);
       this.selected = layer.id; // open its settings straight away
       this.popPos = { x: 16, y: 90 };
@@ -977,7 +982,6 @@ export class Studio {
   /** One object in the panel's list: show/hide, order, and a click to open its settings. */
   private layerRow(L: StudioLayer, index: number) {
     const s = this.spec;
-    const total = s.layers.filter((x) => x.visible).reduce((a, x) => a + x.share, 0) || 1;
     const stop = (fn: () => void) => (e: Event) => { e.stopPropagation(); fn(); };
     const move = (by: number) => {
       const j = index + by;
@@ -992,7 +996,7 @@ export class Studio {
     },
       el('button', { class: 'st-eye', title: L.visible ? 'Hide' : 'Show', innerHTML: L.visible ? ICONS.eye : ICONS.eyeOff, onclick: stop(() => { L.visible = !L.visible; this.changed('build', true); }) }),
       el('span', { class: 'st-row-name' }, L.name),
-      el('span', { class: 'hint' }, L.visible ? `${what} · ${Math.round((L.share / total) * 100)}%` : 'hidden'),
+      el('span', { class: 'hint' }, L.visible ? `${what} · ${L.count.toLocaleString()}` : 'hidden'),
       el('button', { title: 'Move up', disabled: index === 0, onclick: stop(() => move(-1)) }, '↑'),
       el('button', { title: 'Move down', disabled: index === s.layers.length - 1, onclick: stop(() => move(1)) }, '↓'),
     );
@@ -1003,9 +1007,11 @@ export class Studio {
     const s = this.spec;
     const sp = L.spectrum;
     void index;
+    const others = s.layers.reduce((a, x) => a + (x.visible && x !== L ? x.count : 0), 0);
     return [
       this.check('Visible', L, 'visible', 'build', true),
-      this.slider('Share', L, 'share', 1, 100, 1, 'build', 'This object\'s share of the particles, relative to the others'),
+      this.slider('Particles', L, 'count', MIN_OBJECT_PARTICLES, Math.max(MIN_OBJECT_PARTICLES, s.particleCount - others), 500, 'build',
+        `How many particles this object is made of. The scene's budget is ${s.particleCount.toLocaleString()}; the other objects use ${others.toLocaleString()}.`),
       this.slider('Particle size', L, 'size', 0.1, 4, 0.05, 'live', 'How big this object\'s particles are'),
       ...L.forms.map((F, fi) => this.formBlock(L, F, fi)),
       (() => {
